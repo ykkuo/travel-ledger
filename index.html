@@ -157,6 +157,7 @@ let tripId=null, tripName='', tripOwnerUid=null, myMemberId=null, myMemberName=n
 let members=[], batches=[], expenses=[], subcats=[];
 let unsubs=[];
 let currentView='expenses';
+let pendingIsCreator=false;
 let isOnline = navigator.onLine;
 let pendingWrites = {members:false, batches:false, expenses:false};
 window.addEventListener('online', ()=>{ isOnline=true; if(tripId) render(); });
@@ -204,6 +205,35 @@ function tryResumeLocal(){
 /* ============ Home (create / join) ============ */
 function renderHome(prefillCode){
   const isGoogle = auth.currentUser && !auth.currentUser.isAnonymous;
+  if(isGoogle){
+    db.collection('trips').where('ownerUid','==',auth.currentUser.uid).get().then(snap=>{
+      const myTrips = snap.docs.map(d=>({id:d.id, ...d.data()}))
+        .sort((a,b)=> (b.createdAt? b.createdAt.seconds:0) - (a.createdAt? a.createdAt.seconds:0));
+      renderHomeInner(prefillCode, isGoogle, myTrips);
+    }).catch(()=> renderHomeInner(prefillCode, isGoogle, []));
+  } else {
+    renderHomeInner(prefillCode, isGoogle, []);
+  }
+}
+
+function esc(str){ return String(str||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+
+function renderHomeInner(prefillCode, isGoogle, myTrips){
+  const tripListHtml = (isGoogle && myTrips.length) ? `
+    <label>你名下的旅程</label>
+    ${myTrips.map(t=>`
+      <div class="namechip" style="justify-content:space-between">
+        <div onclick="switchToMyTrip('${t.id}')" style="flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0">
+          <div class="avatar" style="width:26px;height:26px;font-size:13px">📒</div>
+          <div style="min-width:0">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
+            <div class="hint">邀請碼 ${t.id}</div>
+          </div>
+        </div>
+        <button class="btn ghost sm" onclick="event.stopPropagation();renameTripPrompt('${t.id}','${esc(t.name)}')">✎</button>
+      </div>`).join('')}
+    <div class="divider"></div>
+  ` : '';
   const createBlock = isGoogle ? `
     <label>建立新旅程</label>
     <input type="text" id="newTripName" placeholder="例如：沖繩家族旅行">
@@ -220,6 +250,7 @@ function renderHome(prefillCode){
       <div class="home-title">📒 旅費帳本</div>
       <div class="home-sub">家庭旅遊記帳與分帳，可多人共編</div>
 
+      ${tripListHtml}
       ${createBlock}
 
       <div class="divider">或</div>
@@ -231,6 +262,33 @@ function renderHome(prefillCode){
   </div>`;
   renderShell(html, true);
   if(prefillCode) setTimeout(()=>joinTripByCode(), 100);
+}
+
+function switchToMyTrip(id){
+  ensureAuthed(()=>{
+    db.collection('trips').doc(id).get().then(doc=>{
+      if(!doc.exists){ alert('這個旅程已經不存在了'); renderHome(); return; }
+      const data = doc.data();
+      tripId = id; tripName = data.name || '旅程';
+      if(data.creatorMemberId){
+        db.collection('trips').doc(id).collection('members').doc(data.creatorMemberId).get().then(mdoc=>{
+          if(mdoc.exists){ pendingIsCreator=false; pickMember(data.creatorMemberId, mdoc.data().name); }
+          else { renderNamePicker(true); }
+        });
+      } else {
+        renderNamePicker(true);
+      }
+    });
+  });
+}
+
+function renameTripPrompt(id, currentName){
+  const name = prompt('輸入新的旅程名稱：', currentName);
+  if(!name || !name.trim() || name.trim()===currentName) return;
+  db.collection('trips').doc(id).update({name:name.trim()}).then(()=>{
+    toast('已更新旅程名稱');
+    if(tripId===id){ tripName=name.trim(); render(); } else { renderHome(); }
+  }).catch(err=> alert('更新失敗：'+err.message));
 }
 
 function signInGoogleThenCreate(){
@@ -274,6 +332,7 @@ function joinTripByCode(){
 }
 
 function renderNamePicker(isCreator){
+  pendingIsCreator = isCreator;
   db.collection('trips').doc(tripId).collection('members').get().then(snap=>{
     const existing = snap.docs.map(d=>({id:d.id, ...d.data()}));
     const chips = existing.map(m=>`
@@ -299,6 +358,10 @@ function renderNamePicker(isCreator){
 
 function pickMember(id, name){
   myMemberId = id; myMemberName = name;
+  if(pendingIsCreator && tripId){
+    db.collection('trips').doc(tripId).update({creatorMemberId:id}).catch(()=>{});
+  }
+  pendingIsCreator = false;
   localStorage.setItem(LOCAL_KEY, JSON.stringify({tripId, memberId:id, memberName:name}));
   enterTrip();
 }
@@ -432,7 +495,14 @@ function renderMembers(){
   </div>
   <div class="card">
     <h2>旅程資訊</h2>
-    <div class="row"><div>邀請碼</div><div class="codepill" onclick="copyInviteCode()">${tripId}</div></div>
+    <div class="row">
+      <div>旅程名稱</div>
+      <div style="display:flex;align-items:center;gap:6px;text-align:right">
+        ${tripName}
+        ${isOwner()? `<button class="btn ghost sm" onclick="renameTripPrompt('${tripId}','${esc(tripName)}')">✎</button>`:''}
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px"><div>邀請碼</div><div class="codepill" onclick="copyInviteCode()">${tripId}</div></div>
     <div class="hint" style="margin-top:8px">把邀請碼傳給家人，他們打開同一個檔案輸入邀請碼即可共編，所有人看到的資料即時同步。</div>
     <button class="btn danger block" style="margin-top:14px" onclick="leaveTrip()">離開這個旅程</button>
   </div>
