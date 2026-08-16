@@ -119,7 +119,6 @@ const firebaseConfig = {
   messagingSenderId: "791649656590",
   appId: "1:791649656590:web:6a7e7e7eb5c3af8855c15f"
 };
-
 /* ================================================================================= */
 
 firebase.initializeApp(firebaseConfig);
@@ -154,7 +153,7 @@ function toast(msg){
 
 /* ============ Global runtime state ============ */
 let tripId=null, tripName='', tripOwnerUid=null, myMemberId=null, myMemberName=null;
-let members=[], batches=[], expenses=[], subcats=[];
+let members=[], batches=[], expenses=[], subcats=[], currencies=[];
 let unsubs=[];
 let currentView='expenses';
 let pendingIsCreator=false;
@@ -311,7 +310,7 @@ function createTrip(){
   if(!name){ alert('請輸入旅程名稱'); return; }
   const code = genCode();
   db.collection('trips').doc(code).set({
-    name, createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[],
+    name, createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[],
     ownerUid: auth.currentUser.uid
   }).then(()=>{
     tripId = code; tripName = name;
@@ -349,7 +348,7 @@ function renderNamePicker(isCreator){
         <label>${existing.length? '不在名單中？新增我的名字':'輸入你的名字'}</label>
         <input type="text" id="myName" placeholder="輸入姓名">
         <button class="btn brass block" style="margin-top:8px" onclick="addAndPickMember()">加入旅程</button>
-        ${isCreator? `<div class="divider">分享給家人</div><div class="codebig">${tripId}</div><div class="hint" style="text-align:center">把這組邀請碼傳給家人，他們打開這個檔案輸入邀請碼就能一起記帳</div>`:''}
+        ${isCreator? `<div class="divider">分享給旅伴</div><div class="codebig">${tripId}</div><div class="hint" style="text-align:center">把這組邀請碼傳給旅伴，他們打開這個檔案輸入邀請碼就能一起記帳</div>`:''}
       </div>
     </div>`;
     renderShell(html, true);
@@ -385,13 +384,14 @@ function enterTrip(){
     if(doc.exists){
       tripName = doc.data().name || tripName;
       subcats = doc.data().subcats || [];
+      currencies = doc.data().currencies || [];
       tripOwnerUid = doc.data().ownerUid || null;
       if(currentView) render();
     } else {
       alert('這個旅程已被刪除');
       localStorage.removeItem(LOCAL_KEY);
       unsubs.forEach(u=>u()); unsubs=[];
-      tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; tripOwnerUid=null;
+      tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null;
       renderHome();
     }
   }));
@@ -416,7 +416,7 @@ function leaveTrip(){
   if(!confirm('離開這個旅程？（資料不會刪除，之後可用邀請碼重新加入）')) return;
   localStorage.removeItem(LOCAL_KEY);
   unsubs.forEach(u=>u()); unsubs=[];
-  tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[];
+  tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[];
   renderHome();
 }
 
@@ -442,7 +442,7 @@ function renderShell(mainHtml, isHome){
       ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a5 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a6 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -503,7 +503,7 @@ function renderMembers(){
       </div>
     </div>
     <div class="row" style="margin-top:8px"><div>邀請碼</div><div class="codepill" onclick="copyInviteCode()">${tripId}</div></div>
-    <div class="hint" style="margin-top:8px">把邀請碼傳給家人，他們打開同一個檔案輸入邀請碼即可共編，所有人看到的資料即時同步。</div>
+    <div class="hint" style="margin-top:8px">把邀請碼傳給旅伴，他們打開同一個檔案輸入邀請碼即可共編，所有人看到的資料即時同步。</div>
     <button class="btn danger block" style="margin-top:14px" onclick="leaveTrip()">離開這個旅程</button>
   </div>
   <div class="card">
@@ -553,7 +553,7 @@ function deleteTrip(){
   }).then(()=>{
     localStorage.removeItem(LOCAL_KEY);
     unsubs.forEach(u=>u()); unsubs=[];
-    tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; tripOwnerUid=null;
+    tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null;
     renderHome();
     toast('旅程已刪除');
   }).catch(err=> alert('刪除失敗：'+err.message));
@@ -582,7 +582,8 @@ function renderFx(){
     <label>備註（例如：機場、市區銀行）</label>
     <input type="text" id="fxLabel" placeholder="選填">
     <label>幣別</label>
-    <input type="text" id="fxCurrency" placeholder="例如 JPY">
+    <input type="text" id="fxCurrency" list="fxCurrencyList" placeholder="例如 JPY">
+    <datalist id="fxCurrencyList">${(currencies||[]).map(c=>`<option value="${c}">`).join('')}</datalist>
     <label>換出台幣</label>
     <input type="number" id="fxTwd" placeholder="10000">
     <label>換入外幣</label>
@@ -596,6 +597,9 @@ function addBatch(){
   const twd = parseFloat(document.getElementById('fxTwd').value);
   const foreign = parseFloat(document.getElementById('fxForeign').value);
   if(!currency || !twd || !foreign){ alert('請填寫幣別、台幣與外幣金額'); return; }
+  if(!currencies.includes(currency)){
+    tripRef().update({currencies: firebase.firestore.FieldValue.arrayUnion(currency)});
+  }
   tripRef().collection('batches').doc(uid()).set({label, currency, twd, foreign});
 }
 function removeBatch(id){
@@ -626,8 +630,8 @@ function renderExpenses(){
       <div class="expitem" onclick="openExpenseModal('${e.id}')">
         <div class="ic">${catIcon(e.mainCat)}</div>
         <div class="mid">
-          <div class="t1"><span class="dot ${e.status==='confirmed'?'conf':'est'}"></span>${catLabel(e.mainCat)}${e.subCat? ' · '+e.subCat:''}</div>
-          <div class="t2">${payer} 付款${e.paymethod==='cash'?' · 現金':' · 刷卡'}</div>
+          <div class="t1"><span class="dot ${e.status==='confirmed'?'conf':'est'}"></span>${e.title? e.title : catLabel(e.mainCat)}</div>
+          <div class="t2">${catLabel(e.mainCat)}${e.subCat? ' · '+e.subCat:''} · ${payer} 付款${e.paymethod==='cash'?' · 現金':' · 刷卡'}</div>
         </div>
         <div class="amt">
           <div class="twd mono">NT$${fmt(e.twdAmount)}</div>
@@ -644,7 +648,7 @@ function renderExpenses(){
 function openExpenseModal(id){
   const e = id ? expenses.find(x=>x.id===id) : null;
   const draft = e ? JSON.parse(JSON.stringify(e)) : {
-    id:null, date:todayStr(), mainCat:'food', subCat:'',
+    id:null, date:todayStr(), title:'', mainCat:'food', subCat:'',
     paymethod:'card', currency:'TWD', foreignAmount:'', twdAmount:'',
     status:'estimated', batchId:null, payerId: myMemberId || (members[0]?.id) || null,
     beneficiaries: members.map(m=>({memberId:m.id, amount:null}))
@@ -654,6 +658,7 @@ function openExpenseModal(id){
 
 function renderExpenseModal(d, isEdit){
   const subcatOptions = (subcats||[]).map(s=>`<option value="${s}">`).join('');
+  const currencyOptions = (currencies||[]).map(c=>`<option value="${c}">`).join('');
   const catBtns = CATS.map(c=>`
     <div class="catbtn ${d.mainCat===c.id?'sel':''}" data-cat="${c.id}">
       <span class="ic">${c.ic}</span>${c.label}
@@ -685,6 +690,9 @@ function renderExpenseModal(d, isEdit){
       <label>日期</label>
       <input type="date" id="fDate" value="${d.date}">
 
+      <label>標題</label>
+      <input type="text" id="fTitle" value="${d.title||''}" placeholder="例如：築地市場晚餐">
+
       <label>主分類</label>
       <div class="catgrid" id="catGrid">${catBtns}</div>
 
@@ -707,7 +715,8 @@ function renderExpenseModal(d, isEdit){
 
       <div id="cardFields" style="display:${d.paymethod==='card'?'block':'none'}">
         <label>幣別</label>
-        <input type="text" id="fCurrency" value="${d.currency==='TWD'?'':d.currency}" placeholder="例如 JPY，台幣消費可留空">
+        <input type="text" id="fCurrency" list="currencyList" value="${d.currency==='TWD'?'':d.currency}" placeholder="例如 JPY，台幣消費可留空">
+        <datalist id="currencyList">${currencyOptions}</datalist>
         <label>外幣金額（選填，方便對帳）</label>
         <input type="number" id="fForeignCard" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 5000">
         <label>台幣金額（信用卡帳單金額，可先留空之後再補）</label>
@@ -760,6 +769,7 @@ function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 
 function saveExpense(id){
   const date = document.getElementById('fDate').value || todayStr();
+  const title = document.getElementById('fTitle').value.trim();
   const catEl = document.querySelector('#catGrid .catbtn.sel');
   const mainCat = catEl ? catEl.dataset.cat : 'other';
   const subCat = document.getElementById('fSubcat').value.trim();
@@ -814,8 +824,11 @@ function saveExpense(id){
   if(subCat && !subcats.includes(subCat)){
     tripRef().update({subcats: firebase.firestore.FieldValue.arrayUnion(subCat)});
   }
+  if(currency && currency!=='TWD' && currency!=='外幣' && !currencies.includes(currency)){
+    tripRef().update({currencies: firebase.firestore.FieldValue.arrayUnion(currency)});
+  }
 
-  const record = {date, mainCat, subCat, paymethod, currency, foreignAmount, twdAmount, status, batchId, payerId, beneficiaries};
+  const record = {date, title, mainCat, subCat, paymethod, currency, foreignAmount, twdAmount, status, batchId, payerId, beneficiaries};
   const docId = id || uid();
   tripRef().collection('expenses').doc(docId).set(record).then(()=>{
     closeModal();
