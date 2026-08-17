@@ -134,6 +134,7 @@ const CATS = [
   {id:'transport', label:'交通', ic:'🚗'},
   {id:'other', label:'其他', ic:'🎒'},
 ];
+const TRIP_ICONS = ['📒','🧳','✈️','🏖️','🗺️','⛰️','🚗','🎒','🍜','📸','🚂','🛳️','🏕️','🎡','🗽'];
 function catIcon(id){ const c = CATS.find(x=>x.id===id); return c? c.ic : '🎒'; }
 function catLabel(id){ const c = CATS.find(x=>x.id===id); return c? c.label : '其他'; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -153,7 +154,7 @@ function toast(msg){
 }
 
 /* ============ Global runtime state ============ */
-let tripId=null, tripName='', tripOwnerUid=null, myMemberId=null, myMemberName=null;
+let tripId=null, tripName='', tripIcon='📒', tripOwnerUid=null, myMemberId=null, myMemberName=null;
 let members=[], batches=[], expenses=[], subcats=[], currencies=[];
 let unsubs=[];
 let currentView='expenses';
@@ -224,7 +225,7 @@ function renderHomeInner(prefillCode, isGoogle, myTrips){
     ${myTrips.map(t=>`
       <div class="namechip" style="justify-content:space-between">
         <div onclick="switchToMyTrip('${t.id}')" style="flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0">
-          <div class="avatar" style="width:26px;height:26px;font-size:13px">📒</div>
+          <div class="avatar" style="width:26px;height:26px;font-size:13px">${t.icon||'📒'}</div>
           <div style="min-width:0">
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
             <div class="hint">邀請碼 ${t.id}</div>
@@ -311,7 +312,7 @@ function createTrip(){
   if(!name){ alert('請輸入旅程名稱'); return; }
   const code = genCode();
   db.collection('trips').doc(code).set({
-    name, createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[],
+    name, icon:'📒', createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[],
     ownerUid: auth.currentUser.uid
   }).then(()=>{
     tripId = code; tripName = name;
@@ -413,6 +414,7 @@ function enterTrip(){
   unsubs.push(tripRef().onSnapshot(doc=>{
     if(doc.exists){
       tripName = doc.data().name || tripName;
+      tripIcon = doc.data().icon || '📒';
       subcats = doc.data().subcats || [];
       currencies = doc.data().currencies || [];
       tripOwnerUid = doc.data().ownerUid || null;
@@ -421,7 +423,7 @@ function enterTrip(){
       alert('這個旅程已被刪除');
       localStorage.removeItem(LOCAL_KEY);
       unsubs.forEach(u=>u()); unsubs=[];
-      tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null;
+      tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null; tripIcon='📒';
       renderHome();
     }
   }));
@@ -446,7 +448,7 @@ function leaveTrip(){
   if(!confirm('離開這個旅程？（資料不會刪除，之後可用邀請碼重新加入）')) return;
   localStorage.removeItem(LOCAL_KEY);
   unsubs.forEach(u=>u()); unsubs=[];
-  tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[];
+  tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripIcon='📒';
   renderHome();
 }
 
@@ -469,10 +471,10 @@ function renderShell(mainHtml, isHome){
   <header class="app">
     <h1>旅費帳本</h1>
     <div class="sub">
-      ${tripName || ''}
+      ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -526,6 +528,13 @@ function renderMembers(){
   <div class="card">
     <h2>旅程資訊</h2>
     <div class="row">
+      <div>旅程圖示</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:20px">${tripIcon}</span>
+        <button class="btn ghost sm" onclick="openIconPicker()">變更</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
       <div>旅程名稱</div>
       <div style="display:flex;align-items:center;gap:6px;text-align:right">
         ${tripName}
@@ -540,7 +549,7 @@ function renderMembers(){
     <h2>刪除整個旅程</h2>
     ${isOwner()
       ? `<div class="hint">你是這趟旅程的建立者，可以永久刪除整個旅程與所有記帳資料（其他成員也會一併移除）。此動作無法復原。</div>
-         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除這個旅程</button>`
+         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除</button>`
       : `<div class="hint">只有建立這趟旅程的人可以刪除整個旅程，避免其他成員誤刪大家的資料。你可以用上方「離開這個旅程」退出。</div>`
     }
   </div>`;
@@ -558,6 +567,28 @@ function removeMember(id){
 }
 function memberName(id){ const m = members.find(x=>x.id===id); return m? m.name : '（已刪除成員）'; }
 function isOwner(){ return auth.currentUser && tripOwnerUid && auth.currentUser.uid === tripOwnerUid; }
+
+function openIconPicker(){
+  const html = `
+  <div class="modal-bg" id="iconModalBg">
+    <div class="modal modal-wrap">
+      <button class="close" onclick="closeModal()">✕</button>
+      <h2>選擇旅程圖示</h2>
+      <div class="catgrid" style="grid-template-columns:repeat(5,1fr);margin-top:8px">
+        ${TRIP_ICONS.map(ic=>`
+          <div class="catbtn ${ic===tripIcon?'sel':''}" style="font-size:22px;padding:14px 4px" onclick="setTripIcon('${ic}')">${ic}</div>
+        `).join('')}
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modalRoot').innerHTML = html;
+}
+function setTripIcon(icon){
+  tripRef().update({icon}).then(()=>{
+    closeModal();
+    toast('已更新旅程圖示');
+  }).catch(err=> alert('更新失敗：'+err.message));
+}
 
 function deleteTrip(){
   const typed = prompt(`此操作會永久刪除「${tripName}」的所有記帳、成員、換匯資料，且無法復原。\n請輸入旅程名稱「${tripName}」以確認刪除：`);
@@ -583,7 +614,7 @@ function deleteTrip(){
   }).then(()=>{
     localStorage.removeItem(LOCAL_KEY);
     unsubs.forEach(u=>u()); unsubs=[];
-    tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null;
+    tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null; tripIcon='📒';
     renderHome();
     toast('旅程已刪除');
   }).catch(err=> alert('刪除失敗：'+err.message));
