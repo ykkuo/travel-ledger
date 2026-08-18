@@ -468,7 +468,7 @@ function renderShell(mainHtml, isHome){
       ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -586,8 +586,12 @@ function deleteTrip(){
 }
 
 /* ============ Currency rates page ============ */
+// 匯率頁上已經出現（新增）過的幣別清單，供記帳頁的下拉選單共用
+function ratePageCurrencies(){
+  return Array.from(new Set([...(currencies||[]), ...Object.keys(currencyRates||{})])).sort();
+}
 function renderRates(){
-  const knownCurs = Array.from(new Set([...(currencies||[]), ...Object.keys(currencyRates||{})])).sort();
+  const knownCurs = ratePageCurrencies();
   const rows = knownCurs.map(c=>{
     const rate = getRate(c);
     return `
@@ -813,8 +817,11 @@ function renderExpenseModal(d, isEdit){
       ${payMethodSeg}
 
       <div id="cashFields" style="display:${d.paymethod==='cash'?'block':'none'}">
-        <label>幣別（台幣消費可留空）</label>
-        <input type="text" id="fCurrencyCash" list="currencyList" value="${d.currency && d.currency!=='TWD' && d.currency!=='外幣'?d.currency:''}" placeholder="例如 JPY">
+        <label>幣別（台幣現金可選「台幣」）</label>
+        <select id="fCurrencyCash">
+          <option value="">台幣（現金）</option>
+          ${ratePageCurrencies().map(c=>`<option value="${c}" ${d.currency===c?'selected':''}>${c}</option>`).join('')}
+        </select>
         <label>外幣金額</label>
         <input type="number" id="fForeignCash" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 1200">
         <div id="cashRateHint" class="hint"></div>
@@ -866,7 +873,10 @@ function renderExpenseModal(d, isEdit){
   });
   ['fCurrencyCash','fForeignCash','fCurrency','fForeignCard','fTwdCard'].forEach(id=>{
     const el = document.getElementById(id);
-    if(el) el.addEventListener('input', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
+    if(el){
+      el.addEventListener('input', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
+      el.addEventListener('change', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
+    }
   });
   bindBenefCheckboxHandlers();
   refreshCashRateHint();
