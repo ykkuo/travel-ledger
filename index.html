@@ -100,7 +100,6 @@
   .home-sub{text-align:center; color:var(--gray); font-size:13px; margin-bottom:22px;}
   .namechip{border:1px solid var(--line); background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:8px; cursor:pointer; display:flex; align-items:center; gap:10px; font-size:14.5px;}
   .namechip:active{background:var(--paper-dim);}
-  .namechip.claimedother{opacity:.6;}
   .divider{display:flex; align-items:center; gap:10px; margin:18px 0; color:var(--gray); font-size:12px;}
   .divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--line);}
   .codebig{font-family:'Roboto Mono',monospace; font-size:28px; font-weight:700; letter-spacing:4px; text-align:center; color:var(--teal); margin:10px 0;}
@@ -134,7 +133,6 @@ const CATS = [
   {id:'transport', label:'交通', ic:'🚗'},
   {id:'other', label:'其他', ic:'🎒'},
 ];
-const TRIP_ICONS = ['📒','🧳','✈️','🏖️','🗺️','⛰️','🚗','🎒','🍜','📸','🚂','🛳️','🏕️','🎡','🗽'];
 function catIcon(id){ const c = CATS.find(x=>x.id===id); return c? c.ic : '🎒'; }
 function catLabel(id){ const c = CATS.find(x=>x.id===id); return c? c.label : '其他'; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -153,17 +151,47 @@ function toast(msg){
   setTimeout(()=>t.remove(), 1800);
 }
 
+/* ============ Currency rates (1 單位外幣 = ? 台幣) ============ */
+function getRate(cur){
+  const r = (currencyRates||{})[cur];
+  return (typeof r==='number' && r>0) ? r : null;
+}
+// 現金支出的即時台幣金額：有匯率就用「目前」匯率換算（跟著匯率頁更新），沒有就退回存檔當下的金額
+function liveTwdAmount(e){
+  if(e.paymethod==='cash' && e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
+    const rate = getRate(e.currency);
+    if(rate!=null) return (e.foreignAmount||0) * rate;
+  }
+  return e.twdAmount||0;
+}
+// 對應到單一受益人的即時台幣分攤金額
+function liveBenefTwd(e, b){
+  if(e.paymethod==='cash' && e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
+    const rate = getRate(e.currency);
+    if(rate!=null && b.foreignAmount!=null) return b.foreignAmount * rate;
+  }
+  return b.amount||0;
+}
+// 現金外幣支出的即時狀態：有匯率就視為已確認，沒有就是估算中
+function liveStatus(e){
+  if(e.paymethod==='cash' && e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
+    return getRate(e.currency)!=null ? 'confirmed' : 'estimated';
+  }
+  return e.status;
+}
+
 /* ============ Global runtime state ============ */
-let tripId=null, tripName='', tripIcon='📒', tripOwnerUid=null, myMemberId=null, myMemberName=null;
-let members=[], batches=[], expenses=[], subcats=[], currencies=[];
+let tripId=null, tripName='', tripOwnerUid=null, myMemberId=null, myMemberName=null;
+let members=[], expenses=[], subcats=[], currencies=[], currencyRates={};
 let unsubs=[];
 let currentView='expenses';
+let settleMode='twd'; // 'twd' = 折合台幣結算, 'currency' = 依幣別分開結算
 let pendingIsCreator=false;
 let isOnline = navigator.onLine;
-let pendingWrites = {members:false, batches:false, expenses:false};
+let pendingWrites = {members:false, expenses:false};
 window.addEventListener('online', ()=>{ isOnline=true; if(tripId) render(); });
 window.addEventListener('offline', ()=>{ isOnline=false; if(tripId) render(); });
-function hasPending(){ return pendingWrites.members || pendingWrites.batches || pendingWrites.expenses; }
+function hasPending(){ return pendingWrites.members || pendingWrites.expenses; }
 let syncing=false;
 
 function tripRef(){ return db.collection('trips').doc(tripId); }
@@ -225,7 +253,7 @@ function renderHomeInner(prefillCode, isGoogle, myTrips){
     ${myTrips.map(t=>`
       <div class="namechip" style="justify-content:space-between">
         <div onclick="switchToMyTrip('${t.id}')" style="flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0">
-          <div class="avatar" style="width:26px;height:26px;font-size:13px">${t.icon||'📒'}</div>
+          <div class="avatar" style="width:26px;height:26px;font-size:13px">📒</div>
           <div style="min-width:0">
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
             <div class="hint">邀請碼 ${t.id}</div>
@@ -312,7 +340,7 @@ function createTrip(){
   if(!name){ alert('請輸入旅程名稱'); return; }
   const code = genCode();
   db.collection('trips').doc(code).set({
-    name, icon:'📒', createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[],
+    name, createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[], currencyRates:{},
     ownerUid: auth.currentUser.uid
   }).then(()=>{
     tripId = code; tripName = name;
@@ -336,28 +364,10 @@ function renderNamePicker(isCreator){
   pendingIsCreator = isCreator;
   db.collection('trips').doc(tripId).collection('members').get().then(snap=>{
     const existing = snap.docs.map(d=>({id:d.id, ...d.data()}));
-
-    /* 自動恢復身份：如果這個瀏覽器/帳號（uid）先前已經認領過此旅程裡的某個成員，
-       就直接以該身份繼續，不再顯示選人畫面，避免誤選成別人。 */
-    const mine = auth.currentUser ? existing.find(m=> m.claimedUid && m.claimedUid===auth.currentUser.uid) : null;
-    if(mine){
-      pendingIsCreator = false;
-      pickMember(mine.id, mine.name);
-      return;
-    }
-
-    const chips = existing.map(m=>{
-      const claimedByOther = !!(m.claimedUid && auth.currentUser && m.claimedUid!==auth.currentUser.uid);
-      const nameEsc = m.name.replace(/'/g,"\\'");
-      const clickFn = claimedByOther
-        ? `confirmClaimOther('${m.id}','${nameEsc}')`
-        : `pickMember('${m.id}','${nameEsc}')`;
-      return `
-      <div class="namechip ${claimedByOther?'claimedother':''}" onclick="${clickFn}">
+    const chips = existing.map(m=>`
+      <div class="namechip" onclick="pickMember('${m.id}','${m.name.replace(/'/g,"\\'")}')">
         <div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}
-        ${claimedByOther? ' <span class="hint">（可能已有人在用，點擊需確認）</span>':''}
-      </div>`;
-    }).join('');
+      </div>`).join('');
     const html = `
     <div class="home-wrap">
       <div class="home-card">
@@ -375,21 +385,12 @@ function renderNamePicker(isCreator){
   });
 }
 
-function confirmClaimOther(id, name){
-  if(confirm(`「${name}」這個身份似乎已經有其他裝置在使用了。\n\n如果這其實就是你自己（例如你換了瀏覽器或清除過資料），可以繼續；如果這是旅伴的名字，請不要選它，改選你自己的名字或在下方新增。\n\n確定要以「${name}」的身份繼續嗎？`)){
-    pickMember(id, name);
-  }
-}
-
 function pickMember(id, name){
   myMemberId = id; myMemberName = name;
   if(pendingIsCreator && tripId){
     db.collection('trips').doc(tripId).update({creatorMemberId:id}).catch(()=>{});
   }
   pendingIsCreator = false;
-  if(auth.currentUser){
-    tripRef().collection('members').doc(id).set({claimedUid: auth.currentUser.uid}, {merge:true}).catch(()=>{});
-  }
   localStorage.setItem(LOCAL_KEY, JSON.stringify({tripId, memberId:id, memberName:name}));
   enterTrip();
 }
@@ -397,9 +398,7 @@ function addAndPickMember(){
   const name = document.getElementById('myName').value.trim();
   if(!name){ alert('請輸入名字'); return; }
   const id = uid();
-  const data = {name};
-  if(auth.currentUser) data.claimedUid = auth.currentUser.uid;
-  tripRef().collection('members').doc(id).set(data).then(()=>{
+  db.collection('trips').doc(tripId).collection('members').doc(id).set({name}).then(()=>{
     pickMember(id, name);
   });
 }
@@ -414,27 +413,22 @@ function enterTrip(){
   unsubs.push(tripRef().onSnapshot(doc=>{
     if(doc.exists){
       tripName = doc.data().name || tripName;
-      tripIcon = doc.data().icon || '📒';
       subcats = doc.data().subcats || [];
       currencies = doc.data().currencies || [];
+      currencyRates = doc.data().currencyRates || {};
       tripOwnerUid = doc.data().ownerUid || null;
       if(currentView) render();
     } else {
       alert('這個旅程已被刪除');
       localStorage.removeItem(LOCAL_KEY);
       unsubs.forEach(u=>u()); unsubs=[];
-      tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null; tripIcon='📒';
+      tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null;
       renderHome();
     }
   }));
   unsubs.push(tripRef().collection('members').orderBy('name').onSnapshot({includeMetadataChanges:true}, snap=>{
     members = snap.docs.map(d=>({id:d.id, ...d.data()}));
     pendingWrites.members = snap.metadata.hasPendingWrites;
-    render();
-  }));
-  unsubs.push(tripRef().collection('batches').onSnapshot({includeMetadataChanges:true}, snap=>{
-    batches = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    pendingWrites.batches = snap.metadata.hasPendingWrites;
     render();
   }));
   unsubs.push(tripRef().collection('expenses').onSnapshot({includeMetadataChanges:true}, snap=>{
@@ -448,7 +442,7 @@ function leaveTrip(){
   if(!confirm('離開這個旅程？（資料不會刪除，之後可用邀請碼重新加入）')) return;
   localStorage.removeItem(LOCAL_KEY);
   unsubs.forEach(u=>u()); unsubs=[];
-  tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripIcon='📒';
+  tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={};
   renderHome();
 }
 
@@ -471,10 +465,10 @@ function renderShell(mainHtml, isHome){
   <header class="app">
     <h1>旅費帳本</h1>
     <div class="sub">
-      ${tripIcon} ${tripName || ''}
+      ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -484,7 +478,7 @@ function renderShell(mainHtml, isHome){
   <button class="fab" id="fabAdd" title="新增支出">＋</button>
   <nav class="bottom">
     <div class="item" data-view="expenses"><span class="ic">📒</span>記帳</div>
-    <div class="item" data-view="fx"><span class="ic">💱</span>換匯</div>
+    <div class="item" data-view="fx"><span class="ic">💱</span>匯率</div>
     <div class="item" data-view="settle"><span class="ic">🧾</span>結算</div>
     <div class="item" data-view="members"><span class="ic">👨‍👩‍👧‍👦</span>成員</div>
   </nav>
@@ -502,7 +496,7 @@ function render(){
   if(!tripId) return;
   let html;
   if(currentView==='expenses') html = renderExpenses();
-  else if(currentView==='fx') html = renderFx();
+  else if(currentView==='fx') html = renderRates();
   else if(currentView==='settle') html = renderSettle();
   else if(currentView==='members') html = renderMembers();
   renderShell(html, false);
@@ -528,13 +522,6 @@ function renderMembers(){
   <div class="card">
     <h2>旅程資訊</h2>
     <div class="row">
-      <div>旅程圖示</div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:20px">${tripIcon}</span>
-        <button class="btn ghost sm" onclick="openIconPicker()">變更</button>
-      </div>
-    </div>
-    <div class="row" style="margin-top:8px">
       <div>旅程名稱</div>
       <div style="display:flex;align-items:center;gap:6px;text-align:right">
         ${tripName}
@@ -549,7 +536,7 @@ function renderMembers(){
     <h2>刪除整個旅程</h2>
     ${isOwner()
       ? `<div class="hint">你是這趟旅程的建立者，可以永久刪除整個旅程與所有記帳資料（其他成員也會一併移除）。此動作無法復原。</div>
-         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除</button>`
+         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除這個旅程</button>`
       : `<div class="hint">只有建立這趟旅程的人可以刪除整個旅程，避免其他成員誤刪大家的資料。你可以用上方「離開這個旅程」退出。</div>`
     }
   </div>`;
@@ -568,30 +555,8 @@ function removeMember(id){
 function memberName(id){ const m = members.find(x=>x.id===id); return m? m.name : '（已刪除成員）'; }
 function isOwner(){ return auth.currentUser && tripOwnerUid && auth.currentUser.uid === tripOwnerUid; }
 
-function openIconPicker(){
-  const html = `
-  <div class="modal-bg" id="iconModalBg">
-    <div class="modal modal-wrap">
-      <button class="close" onclick="closeModal()">✕</button>
-      <h2>選擇旅程圖示</h2>
-      <div class="catgrid" style="grid-template-columns:repeat(5,1fr);margin-top:8px">
-        ${TRIP_ICONS.map(ic=>`
-          <div class="catbtn ${ic===tripIcon?'sel':''}" style="font-size:22px;padding:14px 4px" onclick="setTripIcon('${ic}')">${ic}</div>
-        `).join('')}
-      </div>
-    </div>
-  </div>`;
-  document.getElementById('modalRoot').innerHTML = html;
-}
-function setTripIcon(icon){
-  tripRef().update({icon}).then(()=>{
-    closeModal();
-    toast('已更新旅程圖示');
-  }).catch(err=> alert('更新失敗：'+err.message));
-}
-
 function deleteTrip(){
-  const typed = prompt(`此操作會永久刪除「${tripName}」的所有記帳、成員、換匯資料，且無法復原。\n請輸入旅程名稱「${tripName}」以確認刪除：`);
+  const typed = prompt(`此操作會永久刪除「${tripName}」的所有記帳、成員、匯率資料，且無法復原。\n請輸入旅程名稱「${tripName}」以確認刪除：`);
   if(typed !== tripName){ if(typed!==null) alert('輸入的名稱不符，已取消刪除'); return; }
   toast('刪除中…');
   Promise.all([
@@ -614,64 +579,66 @@ function deleteTrip(){
   }).then(()=>{
     localStorage.removeItem(LOCAL_KEY);
     unsubs.forEach(u=>u()); unsubs=[];
-    tripId=null; myMemberId=null; myMemberName=null; members=[]; batches=[]; expenses=[]; subcats=[]; currencies=[]; tripOwnerUid=null; tripIcon='📒';
+    tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null;
     renderHome();
     toast('旅程已刪除');
   }).catch(err=> alert('刪除失敗：'+err.message));
 }
 
-/* ============ FX batches ============ */
-function renderFx(){
-  const rows = batches.map(b=>`
+/* ============ Currency rates page ============ */
+function renderRates(){
+  const knownCurs = Array.from(new Set([...(currencies||[]), ...Object.keys(currencyRates||{})])).sort();
+  const rows = knownCurs.map(c=>{
+    const rate = getRate(c);
+    return `
     <div class="card" style="margin-bottom:10px;">
       <div class="row">
-        <div>
-          <div style="font-weight:700">${b.label || '換匯批次'} · ${b.currency}</div>
-          <div class="hint">NT$${fmt(b.twd)} → ${fmt(b.foreign)} ${b.currency}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="mono" style="font-size:13px;color:var(--teal)">1 ${b.currency} = ${fmt(b.twd/b.foreign)} 台幣</div>
-          <button class="btn danger sm" style="margin-top:6px" onclick="removeBatch('${b.id}')">刪除</button>
+        <div style="font-weight:700">${c}</div>
+        <div style="text-align:right;flex:1;display:flex;align-items:center;justify-content:flex-end;gap:8px">
+          <span class="hint" style="margin:0">1 ${c} =</span>
+          <input type="number" id="rateInput_${c}" value="${rate!=null? rate:''}" placeholder="尚未設定" style="width:100px;text-align:right">
+          <span class="hint" style="margin:0">台幣</span>
         </div>
       </div>
-    </div>`).join('') || `<div class="hint" style="padding:8px 0 14px">尚未記錄換匯，現金支出可先選「無對應批次」，之後再補。</div>`;
+      <div class="footer-actions">
+        <button class="btn ghost sm" onclick="saveRate('${c}')">儲存</button>
+        ${rate!=null? `<button class="btn danger sm" onclick="removeRate('${c}')">刪除匯率</button>`:''}
+      </div>
+    </div>`;
+  }).join('') || `<div class="hint" style="padding:8px 0 14px">尚未有任何幣別，新增一筆現金或信用卡外幣支出後，幣別會自動出現在這裡，也可以直接在下面新增。</div>`;
+
   return `
-  <div class="banner">記錄每次換匯的實際金額，現金支出時選擇對應批次，系統會用當次真實匯率換算台幣成本。</div>
+  <div class="banner">💡 每種幣別只要設定一個台幣匯率，現金支出選擇該幣別、輸入外幣金額後就會自動換算台幣。之後更新匯率，所有用這個幣別的現金支出都會一起更新。信用卡消費則仍以帳單上的實際台幣金額為準，不受此處匯率影響。</div>
   ${rows}
   <div class="card">
-    <h2>新增換匯批次</h2>
-    <label>備註（例如：機場、市區銀行）</label>
-    <input type="text" id="fxLabel" placeholder="選填">
-    <label>幣別</label>
-    <input type="text" id="fxCurrency" list="fxCurrencyList" placeholder="例如 JPY">
-    <datalist id="fxCurrencyList">${(currencies||[]).map(c=>`<option value="${c}">`).join('')}</datalist>
-    <label>換出台幣</label>
-    <input type="number" id="fxTwd" placeholder="10000">
-    <label>換入外幣</label>
-    <input type="number" id="fxForeign" placeholder="45000">
-    <button class="btn brass block" style="margin-top:12px" onclick="addBatch()">儲存批次</button>
+    <h2>新增幣別</h2>
+    <label>幣別代碼</label>
+    <input type="text" id="newCurCode" placeholder="例如 JPY">
+    <label>匯率（1 單位 = ? 台幣）</label>
+    <input type="number" id="newCurRate" placeholder="例如 0.22">
+    <button class="btn brass block" style="margin-top:12px" onclick="addNewRate()">新增</button>
   </div>`;
 }
-function addBatch(){
-  const label = document.getElementById('fxLabel').value.trim();
-  const currency = document.getElementById('fxCurrency').value.trim().toUpperCase();
-  const twd = parseFloat(document.getElementById('fxTwd').value);
-  const foreign = parseFloat(document.getElementById('fxForeign').value);
-  if(!currency || !twd || !foreign){ alert('請填寫幣別、台幣與外幣金額'); return; }
-  if(!currencies.includes(currency)){
-    tripRef().update({currencies: firebase.firestore.FieldValue.arrayUnion(currency)});
-  }
-  tripRef().collection('batches').doc(uid()).set({label, currency, twd, foreign});
+function saveRate(cur){
+  const inp = document.getElementById('rateInput_'+cur);
+  const rate = parseFloat(inp.value);
+  if(!rate || rate<=0){ alert('請輸入大於 0 的匯率'); return; }
+  tripRef().update({['currencyRates.'+cur]: rate}).then(()=> toast(cur+' 匯率已更新'));
 }
-function removeBatch(id){
-  const used = expenses.some(e=>e.batchId===id);
-  if(used && !confirm('已有支出使用此換匯批次，刪除後那些支出將變回「未對應批次」，確定刪除？')) return;
-  const batch = db.batch();
-  expenses.forEach(e=>{
-    if(e.batchId===id) batch.update(tripRef().collection('expenses').doc(e.id), {batchId:null});
+function removeRate(cur){
+  if(!confirm(`刪除「${cur}」的匯率？此幣別的現金支出將暫時無法換算台幣，直到重新設定匯率。`)) return;
+  tripRef().update({['currencyRates.'+cur]: firebase.firestore.FieldValue.delete()});
+}
+function addNewRate(){
+  const cur = document.getElementById('newCurCode').value.trim().toUpperCase();
+  const rate = parseFloat(document.getElementById('newCurRate').value);
+  if(!cur){ alert('請輸入幣別代碼'); return; }
+  if(!rate || rate<=0){ alert('請輸入大於 0 的匯率'); return; }
+  const updates = {['currencyRates.'+cur]: rate};
+  if(!currencies.includes(cur)) updates.currencies = firebase.firestore.FieldValue.arrayUnion(cur);
+  tripRef().update(updates).then(()=>{
+    toast(cur+' 已新增');
   });
-  batch.delete(tripRef().collection('batches').doc(id));
-  batch.commit();
 }
 
 /* ============ Expenses list ============ */
@@ -691,11 +658,11 @@ function renderExpenses(){
       <div class="expitem" onclick="openExpenseModal('${e.id}')">
         <div class="ic">${catIcon(e.mainCat)}</div>
         <div class="mid">
-          <div class="t1"><span class="dot ${e.status==='confirmed'?'conf':'est'}"></span>${e.title? e.title : catLabel(e.mainCat)}</div>
+          <div class="t1"><span class="dot ${liveStatus(e)==='confirmed'?'conf':'est'}"></span>${e.title? e.title : catLabel(e.mainCat)}</div>
           <div class="t2">${catLabel(e.mainCat)}${e.subCat? ' · '+e.subCat:''} · ${payer} 付款${e.paymethod==='cash'?' · 現金':' · 刷卡'}</div>
         </div>
         <div class="amt">
-          <div class="twd mono">NT$${fmt(e.twdAmount)}</div>
+          <div class="twd mono">NT$${fmt(liveTwdAmount(e))}</div>
           ${e.currency!=='TWD' ? `<div class="orig mono">${fmt(e.foreignAmount)} ${e.currency}</div>` : ''}
         </div>
       </div>`;
@@ -711,10 +678,100 @@ function openExpenseModal(id){
   const draft = e ? JSON.parse(JSON.stringify(e)) : {
     id:null, date:todayStr(), title:'', mainCat:'food', subCat:'',
     paymethod:'card', currency:'TWD', foreignAmount:'', twdAmount:'',
-    status:'estimated', batchId:null, payerId: myMemberId || (members[0]?.id) || null,
-    beneficiaries: members.map(m=>({memberId:m.id, amount:null}))
+    status:'estimated', payerId: myMemberId || (members[0]?.id) || null,
+    beneficiaries: members.map(m=>({memberId:m.id, amount:null, foreignAmount:null}))
   };
   renderExpenseModal(draft, !!e);
+}
+
+/* ---- Foreign-exchange context: figures out, from the form's current state,
+   whether this expense is in a foreign currency and (if known) what the TWD rate is.
+   Used to decide whether the beneficiary split is entered in foreign currency or TWD. ---- */
+function computeFxContextFromDraft(d){
+  if(d.paymethod==='cash'){
+    const currency = d.currency && d.currency!=='TWD' && d.currency!=='外幣' ? d.currency : '';
+    const foreignAmount = currency ? (d.foreignAmount||0) : 0;
+    if(currency){
+      return {isForeign: foreignAmount>0, currency, rate:getRate(currency), foreignTotal:foreignAmount};
+    }
+    return {isForeign: (d.foreignAmount||0)>0, currency:'外幣', rate:null, foreignTotal:d.foreignAmount||0};
+  } else {
+    const currency = d.currency && d.currency!=='TWD' ? d.currency : '';
+    const foreignAmount = currency ? (d.foreignAmount||0) : 0;
+    if(currency && foreignAmount>0){
+      const rate = d.twdAmount>0 ? (d.twdAmount/foreignAmount) : null;
+      return {isForeign:true, currency, rate, foreignTotal:foreignAmount};
+    }
+    return {isForeign:false, currency:'TWD', rate:1, foreignTotal:0};
+  }
+}
+function computeFxContext(){
+  const pmEl = document.querySelector('#payMethodSeg button.sel');
+  const paymethod = pmEl ? pmEl.dataset.pm : 'card';
+  if(paymethod==='cash'){
+    const currency = (document.getElementById('fCurrencyCash')?.value||'').trim().toUpperCase();
+    const foreignAmount = parseFloat(document.getElementById('fForeignCash')?.value) || 0;
+    if(currency){
+      return {isForeign: foreignAmount>0, currency, rate:getRate(currency), foreignTotal:foreignAmount};
+    }
+    return {isForeign: foreignAmount>0, currency:'外幣', rate:null, foreignTotal:foreignAmount};
+  } else {
+    const currency = (document.getElementById('fCurrency')?.value||'').trim().toUpperCase();
+    const foreignAmount = parseFloat(document.getElementById('fForeignCard')?.value) || 0;
+    const twdAmount = parseFloat(document.getElementById('fTwdCard')?.value) || 0;
+    if(currency && currency!=='TWD' && foreignAmount>0){
+      const rate = twdAmount>0 ? (twdAmount/foreignAmount) : null;
+      return {isForeign:true, currency, rate, foreignTotal:foreignAmount};
+    }
+    return {isForeign:false, currency:'TWD', rate:1, foreignTotal:0};
+  }
+}
+
+function benefRowsHtml(beneficiaries, fx){
+  return members.map(m=>{
+    const b = beneficiaries.find(x=>x.memberId===m.id);
+    const checked = !!b;
+    let val = '';
+    if(b){
+      if(fx.isForeign){
+        // 有原生外幣分攤金額就直接用；沒有（舊資料）就先留空，讓使用者自己填或用均分
+        val = (b.foreignAmount!=null) ? b.foreignAmount : '';
+      } else {
+        val = (b.amount!=null) ? b.amount : '';
+      }
+    }
+    return `
+    <div class="benefrow">
+      <input type="checkbox" data-benef="${m.id}" ${checked?'checked':''}>
+      <div class="nm">${m.name}</div>
+      <input type="number" data-benefamt="${m.id}" placeholder="均分" value="${val}" ${checked?'':'disabled'}>
+    </div>`;
+  }).join('');
+}
+function benefUnitHintHtml(fx){
+  return fx.isForeign
+    ? `<div class="hint">目前用「${fx.currency}」輸入每人分攤金額；若部分人指定金額、其餘留空，系統會將剩餘外幣金額平均分給留空的人${fx.rate==null? '（尚未有匯率，台幣分攤將等有匯率後再確認）':''}。</div>`
+    : `<div class="hint">若部分人指定金額、其餘留空，系統會將剩餘金額平均分給留空的人。</div>`;
+}
+function refreshBenefSection(){
+  const fx = computeFxContext();
+  // 保留目前勾選狀態，金額輸入因為單位可能改變而重置，避免誤植
+  const beneficiaries = [];
+  document.querySelectorAll('#benefList input[type=checkbox]').forEach(cb=>{
+    if(cb.checked) beneficiaries.push({memberId:cb.dataset.benef, amount:null, foreignAmount:null});
+  });
+  document.getElementById('benefList').innerHTML = benefRowsHtml(beneficiaries, fx);
+  document.getElementById('benefUnitHint').innerHTML = benefUnitHintHtml(fx);
+  bindBenefCheckboxHandlers();
+}
+function bindBenefCheckboxHandlers(){
+  document.querySelectorAll('#benefList input[type=checkbox]').forEach(cb=>{
+    cb.onchange = ()=>{
+      const amtInput = document.querySelector(`#benefList input[data-benefamt="${cb.dataset.benef}"]`);
+      amtInput.disabled = !cb.checked;
+      if(!cb.checked) amtInput.value='';
+    };
+  });
 }
 
 function renderExpenseModal(d, isEdit){
@@ -729,18 +786,9 @@ function renderExpenseModal(d, isEdit){
       <button type="button" class="${d.paymethod==='cash'?'sel':''}" data-pm="cash">現金</button>
       <button type="button" class="${d.paymethod==='card'?'sel':''}" data-pm="card">信用卡</button>
     </div>`;
-  const batchOptions = batches.map(b=>`<option value="${b.id}" ${d.batchId===b.id?'selected':''}>${b.label||'批次'} · ${b.currency} (1${b.currency}=${fmt(b.twd/b.foreign)}台幣)</option>`).join('');
   const payerOptions = members.map(m=>`<option value="${m.id}" ${d.payerId===m.id?'selected':''}>${m.name}</option>`).join('');
-  const benefRows = members.map(m=>{
-    const b = d.beneficiaries.find(x=>x.memberId===m.id);
-    const checked = !!b;
-    return `
-    <div class="benefrow">
-      <input type="checkbox" data-benef="${m.id}" ${checked?'checked':''}>
-      <div class="nm">${m.name}</div>
-      <input type="number" data-benefamt="${m.id}" placeholder="均分" value="${b && b.amount!=null? b.amount:''}" ${checked?'':'disabled'}>
-    </div>`;
-  }).join('');
+  const initialFx = computeFxContextFromDraft(d);
+  const benefRows = benefRowsHtml(d.beneficiaries, initialFx);
 
   const modalHtml = `
   <div class="modal-bg" id="expModalBg">
@@ -765,13 +813,11 @@ function renderExpenseModal(d, isEdit){
       ${payMethodSeg}
 
       <div id="cashFields" style="display:${d.paymethod==='cash'?'block':'none'}">
-        <label>對應換匯批次</label>
-        <select id="fBatch">
-          <option value="">（無對應批次，之後再補）</option>
-          ${batchOptions}
-        </select>
+        <label>幣別（台幣消費可留空）</label>
+        <input type="text" id="fCurrencyCash" list="currencyList" value="${d.currency && d.currency!=='TWD' && d.currency!=='外幣'?d.currency:''}" placeholder="例如 JPY">
         <label>外幣金額</label>
         <input type="number" id="fForeignCash" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 1200">
+        <div id="cashRateHint" class="hint"></div>
       </div>
 
       <div id="cardFields" style="display:${d.paymethod==='card'?'block':'none'}">
@@ -790,9 +836,9 @@ function renderExpenseModal(d, isEdit){
       <label>付款人</label>
       <select id="fPayer">${payerOptions}</select>
 
-      <label>受益人（誰花的這筆錢；取消勾選代表此人不分攤，未輸入金額則自動均分）</label>
+      <label>受益人（誰花的這筆錢；取消勾選代表此人不分攤）</label>
       <div id="benefList">${benefRows}</div>
-      <div class="hint">若部分人指定金額、其餘留空，系統會將剩餘金額平均分給留空的人。</div>
+      <div id="benefUnitHint">${benefUnitHintHtml(initialFx)}</div>
 
       <div class="footer-actions">
         ${isEdit? `<button class="btn danger" onclick="deleteExpense('${d.id}')">刪除</button>`:''}
@@ -815,15 +861,26 @@ function renderExpenseModal(d, isEdit){
       const pm = el.dataset.pm;
       document.getElementById('cashFields').style.display = pm==='cash'?'block':'none';
       document.getElementById('cardFields').style.display = pm==='card'?'block':'none';
+      refreshBenefSection();
     };
   });
-  document.querySelectorAll('#benefList input[type=checkbox]').forEach(cb=>{
-    cb.onchange = ()=>{
-      const amtInput = document.querySelector(`#benefList input[data-benefamt="${cb.dataset.benef}"]`);
-      amtInput.disabled = !cb.checked;
-      if(!cb.checked) amtInput.value='';
-    };
+  ['fCurrencyCash','fForeignCash','fCurrency','fForeignCard','fTwdCard'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
   });
+  bindBenefCheckboxHandlers();
+  refreshCashRateHint();
+}
+
+function refreshCashRateHint(){
+  const hintEl = document.getElementById('cashRateHint');
+  if(!hintEl) return;
+  const cur = (document.getElementById('fCurrencyCash')?.value||'').trim().toUpperCase();
+  if(!cur){ hintEl.textContent=''; return; }
+  const rate = getRate(cur);
+  hintEl.textContent = rate!=null
+    ? `目前匯率：1 ${cur} = ${fmt(rate)} 台幣`
+    : `「${cur}」尚未設定匯率，請到「匯率」頁新增，設定後這筆支出會自動換算。`;
 }
 
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
@@ -838,16 +895,20 @@ function saveExpense(id){
   const paymethod = pmEl ? pmEl.dataset.pm : 'card';
   const payerId = document.getElementById('fPayer').value;
 
-  let currency='TWD', foreignAmount=0, twdAmount=0, status='confirmed', batchId=null;
+  let currency='TWD', foreignAmount=0, twdAmount=0, status='confirmed';
 
   if(paymethod==='cash'){
-    batchId = document.getElementById('fBatch').value || null;
+    currency = document.getElementById('fCurrencyCash').value.trim().toUpperCase();
     foreignAmount = parseFloat(document.getElementById('fForeignCash').value) || 0;
-    if(batchId){
-      const b = batches.find(x=>x.id===batchId);
-      currency = b.currency;
-      twdAmount = foreignAmount * (b.twd/b.foreign);
-      status = 'confirmed';
+    if(currency){
+      const rate = getRate(currency);
+      if(rate!=null){
+        twdAmount = foreignAmount * rate;
+        status = 'confirmed';
+      } else {
+        twdAmount = 0;
+        status = 'estimated';
+      }
     } else {
       currency = foreignAmount? '外幣':'TWD';
       twdAmount = 0;
@@ -860,7 +921,7 @@ function saveExpense(id){
     status = document.getElementById('fConfirmed').checked ? 'confirmed' : 'estimated';
   }
 
-  if(paymethod==='cash' && batchId && !foreignAmount){ alert('請輸入外幣金額'); return; }
+  const fx = computeFxContext();
 
   const benefChecks = document.querySelectorAll('#benefList input[type=checkbox]');
   let beneficiaries = [];
@@ -868,18 +929,38 @@ function saveExpense(id){
     if(cb.checked){
       const amtInput = document.querySelector(`#benefList input[data-benefamt="${cb.dataset.benef}"]`);
       const val = amtInput.value ? parseFloat(amtInput.value) : null;
-      beneficiaries.push({memberId:cb.dataset.benef, amount:val});
+      beneficiaries.push({memberId:cb.dataset.benef, rawVal:val});
     }
   });
   if(beneficiaries.length===0){ alert('請至少選一位受益人'); return; }
-  const fixedSum = beneficiaries.reduce((s,b)=> s + (b.amount||0), 0);
-  const nullCount = beneficiaries.filter(b=>b.amount==null).length;
-  const remainder = twdAmount - fixedSum;
-  if(nullCount>0){
-    const each = remainder / nullCount;
-    beneficiaries.forEach(b=>{ if(b.amount==null) b.amount = each; });
-  } else if(Math.abs(remainder) > 0.5){
-    if(!confirm(`受益人指定金額總和 (NT$${fmt(fixedSum)}) 與支出金額 (NT$${fmt(twdAmount)}) 不符，仍要儲存嗎？`)) return;
+
+  if(fx.isForeign){
+    // 直接用外幣分攤金額分配，台幣分攤金額則用已知匯率換算（若尚無匯率則先留空，待補匯率後可重新編輯此筆更新）
+    const fixedSum = beneficiaries.reduce((s,b)=> s + (b.rawVal||0), 0);
+    const nullCount = beneficiaries.filter(b=>b.rawVal==null).length;
+    const remainder = fx.foreignTotal - fixedSum;
+    if(nullCount>0){
+      const each = remainder / nullCount;
+      beneficiaries.forEach(b=>{ if(b.rawVal==null) b.rawVal = each; });
+    } else if(Math.abs(remainder) > 0.5){
+      if(!confirm(`受益人指定的外幣金額總和 (${fmt(fixedSum)} ${fx.currency}) 與支出外幣金額 (${fmt(fx.foreignTotal)} ${fx.currency}) 不符，仍要儲存嗎？`)) return;
+    }
+    beneficiaries = beneficiaries.map(b=> ({
+      memberId: b.memberId,
+      foreignAmount: b.rawVal,
+      amount: fx.rate!=null ? b.rawVal * fx.rate : null
+    }));
+  } else {
+    const fixedSum = beneficiaries.reduce((s,b)=> s + (b.rawVal||0), 0);
+    const nullCount = beneficiaries.filter(b=>b.rawVal==null).length;
+    const remainder = twdAmount - fixedSum;
+    if(nullCount>0){
+      const each = remainder / nullCount;
+      beneficiaries.forEach(b=>{ if(b.rawVal==null) b.rawVal = each; });
+    } else if(Math.abs(remainder) > 0.5){
+      if(!confirm(`受益人指定金額總和 (NT$${fmt(fixedSum)}) 與支出金額 (NT$${fmt(twdAmount)}) 不符，仍要儲存嗎？`)) return;
+    }
+    beneficiaries = beneficiaries.map(b=> ({ memberId: b.memberId, amount: b.rawVal, foreignAmount: null }));
   }
 
   if(subCat && !subcats.includes(subCat)){
@@ -889,7 +970,7 @@ function saveExpense(id){
     tripRef().update({currencies: firebase.firestore.FieldValue.arrayUnion(currency)});
   }
 
-  const record = {date, title, mainCat, subCat, paymethod, currency, foreignAmount, twdAmount, status, batchId, payerId, beneficiaries};
+  const record = {date, title, mainCat, subCat, paymethod, currency, foreignAmount, twdAmount, status, payerId, beneficiaries};
   const docId = id || uid();
   tripRef().collection('expenses').doc(docId).set(record).then(()=>{
     closeModal();
@@ -902,17 +983,49 @@ function deleteExpense(id){
 }
 
 /* ============ Settlement ============ */
+function setSettleMode(mode){ settleMode = mode; render(); }
+
+// Greedy min-transaction settlement given a {memberId: netAmount} map.
+// Positive net = should receive money, negative = should pay money.
+function computeTransfers(net){
+  const creditors = members.map(m=>({id:m.id, amt:net[m.id]||0})).filter(x=>x.amt>0.5).sort((a,b)=>b.amt-a.amt);
+  const debtors = members.map(m=>({id:m.id, amt:-(net[m.id]||0)})).filter(x=>x.amt>0.5).sort((a,b)=>b.amt-a.amt);
+  const transfers = [];
+  let ci=0, di=0;
+  while(ci<creditors.length && di<debtors.length){
+    const pay = Math.min(creditors[ci].amt, debtors[di].amt);
+    transfers.push({from:debtors[di].id, to:creditors[ci].id, amt:pay});
+    creditors[ci].amt -= pay; debtors[di].amt -= pay;
+    if(creditors[ci].amt<0.5) ci++;
+    if(debtors[di].amt<0.5) di++;
+  }
+  return transfers;
+}
+
+function settleModeToggleHtml(){
+  return `
+  <div class="seg" style="margin-bottom:12px">
+    <button type="button" class="${settleMode==='twd'?'sel':''}" onclick="setSettleMode('twd')">折合台幣結算</button>
+    <button type="button" class="${settleMode==='currency'?'sel':''}" onclick="setSettleMode('currency')">依幣別分開結算</button>
+  </div>`;
+}
+
 function renderSettle(){
   if(expenses.length===0){
     return `<div class="empty"><div class="big">🧮</div>還沒有支出資料可以結算</div>`;
   }
-  const estCount = expenses.filter(e=>e.status==='estimated').length;
+  return settleModeToggleHtml() + (settleMode==='currency' ? renderSettleByCurrency() : renderSettleTWD());
+}
+
+/* ---- Mode A：所有支出折合台幣，統一結算一次 ---- */
+function renderSettleTWD(){
+  const estCount = expenses.filter(e=>liveStatus(e)==='estimated').length;
   const paid = {}, owed = {};
   members.forEach(m=>{ paid[m.id]=0; owed[m.id]=0; });
   expenses.forEach(e=>{
-    if(paid[e.payerId]!==undefined) paid[e.payerId]+=e.twdAmount;
+    if(paid[e.payerId]!==undefined) paid[e.payerId]+=liveTwdAmount(e);
     e.beneficiaries.forEach(b=>{
-      if(owed[b.memberId]!==undefined) owed[b.memberId]+=b.amount;
+      if(owed[b.memberId]!==undefined) owed[b.memberId]+=liveBenefTwd(e,b);
     });
   });
   const net = {};
@@ -927,17 +1040,7 @@ function renderSettle(){
       </div>
     </div>`).join('');
 
-  const creditors = members.map(m=>({id:m.id, amt:net[m.id]})).filter(x=>x.amt>0.5).sort((a,b)=>b.amt-a.amt);
-  const debtors = members.map(m=>({id:m.id, amt:-net[m.id]})).filter(x=>x.amt>0.5).sort((a,b)=>b.amt-a.amt);
-  const transfers = [];
-  let ci=0, di=0;
-  while(ci<creditors.length && di<debtors.length){
-    const pay = Math.min(creditors[ci].amt, debtors[di].amt);
-    transfers.push({from:debtors[di].id, to:creditors[ci].id, amt:pay});
-    creditors[ci].amt -= pay; debtors[di].amt -= pay;
-    if(creditors[ci].amt<0.5) ci++;
-    if(debtors[di].amt<0.5) di++;
-  }
+  const transfers = computeTransfers(net);
   const transferRows = transfers.map(t=>`
     <div class="transfer">
       <div style="flex:1">${memberName(t.from)}</div>
@@ -946,12 +1049,12 @@ function renderSettle(){
       <div class="mono" style="font-weight:700">NT$${fmt(t.amt)}</div>
     </div>`).join('') || `<div class="hint">目前已打平，不需轉帳。</div>`;
 
-  const summaryText = buildSummaryText(net, transfers);
+  const summaryText = buildSummaryTextTWD(net, transfers);
 
   return `
-  ${estCount>0? `<div class="banner">⚠️ 還有 ${estCount} 筆支出是「估算」狀態，尚未對照信用卡帳單，結算金額可能會再變動。</div>` : ''}
+  ${estCount>0? `<div class="banner">⚠️ 還有 ${estCount} 筆支出是「估算」狀態（信用卡尚未對帳單，或現金幣別尚未設定匯率），結算金額可能會再變動。</div>` : ''}
   <div class="card">
-    <h2>每人淨額</h2>
+    <h2>每人淨額（全部折合台幣）</h2>
     ${rows}
     <div class="stub">
       <h2 style="margin-bottom:8px">建議轉帳</h2>
@@ -963,8 +1066,8 @@ function renderSettle(){
   `;
 }
 
-function buildSummaryText(net, transfers){
-  let lines = ['📒 '+tripName+' 旅費結算', ''];
+function buildSummaryTextTWD(net, transfers){
+  let lines = ['📒 '+tripName+' 旅費結算（折合台幣）', ''];
   members.forEach(m=>{
     const n = net[m.id];
     lines.push(`${m.name}：${n>=0?'應收':'應付'} NT$${fmt(Math.abs(n))}`);
@@ -974,6 +1077,126 @@ function buildSummaryText(net, transfers){
   transfers.forEach(t=> lines.push(`${memberName(t.from)} → ${memberName(t.to)}：NT$${fmt(t.amt)}`));
   return lines.join('\n');
 }
+
+/* ---- Mode B：依幣別分開結算，每種幣別各自算一次淨額與轉帳建議 ----
+   TWD 一律用 twdAmount／beneficiary.amount（本來就是台幣）。
+   外幣（currency 為明確幣別代碼且 foreignAmount>0）則用 foreignAmount，
+   受益人的外幣分攤金額優先用其原生輸入的 foreignAmount；
+   舊資料沒有這個欄位時，才用台幣分攤比例反推（近似值）。
+   currency 未確定（現金沒填幣別、或信用卡外幣消費未填外幣金額）的支出無法準確拆分，
+   會被排除並另外提示，請先補資料或改用「折合台幣結算」。
+*/
+function groupExpensesByCurrency(){
+  const groups = {}; // currency -> array of {expense, amountInCurrency, benefShares:{memberId:amt}}
+  const unresolved = [];
+  expenses.forEach(e=>{
+    if(e.currency==='TWD'){
+      const key='TWD';
+      (groups[key]=groups[key]||[]).push({
+        e, amount: e.twdAmount,
+        shares: Object.fromEntries(e.beneficiaries.map(b=>[b.memberId, b.amount||0]))
+      });
+    } else if(e.currency && e.currency!=='外幣' && e.foreignAmount>0){
+      const key = e.currency;
+      const shares = {};
+      e.beneficiaries.forEach(b=>{
+        if(b.foreignAmount!=null){
+          // 新資料：受益人的外幣分攤是直接輸入的，準確值
+          shares[b.memberId] = b.foreignAmount;
+        } else if(e.twdAmount>0){
+          // 舊資料：只有台幣分攤，用台幣分攤比例反推外幣分攤（近似值）
+          shares[b.memberId] = (b.amount||0)/e.twdAmount * e.foreignAmount;
+        } else {
+          // 舊資料且台幣金額也未知，退而用人數均分外幣
+          const n = e.beneficiaries.length || 1;
+          shares[b.memberId] = e.foreignAmount/n;
+        }
+      });
+      (groups[key]=groups[key]||[]).push({e, amount: e.foreignAmount, shares});
+    } else {
+      unresolved.push(e);
+    }
+  });
+  return {groups, unresolved};
+}
+
+function renderSettleByCurrency(){
+  const {groups, unresolved} = groupExpensesByCurrency();
+  const currencyKeys = Object.keys(groups).sort((a,b)=> a==='TWD'? -1 : b==='TWD'? 1 : a.localeCompare(b));
+
+  if(currencyKeys.length===0){
+    return `<div class="empty"><div class="big">🧮</div>目前沒有可分幣別結算的支出</div>`;
+  }
+
+  let allSummaryLines = ['📒 '+tripName+' 旅費結算（依幣別分開）', ''];
+  let cardsHtml = '';
+
+  currencyKeys.forEach(cur=>{
+    const items = groups[cur];
+    const paid = {}, owed = {};
+    members.forEach(m=>{ paid[m.id]=0; owed[m.id]=0; });
+    items.forEach(({e, amount, shares})=>{
+      if(paid[e.payerId]!==undefined) paid[e.payerId]+=amount;
+      Object.keys(shares).forEach(mid=>{ if(owed[mid]!==undefined) owed[mid]+=shares[mid]; });
+    });
+    const net = {};
+    members.forEach(m=>{ net[m.id] = paid[m.id]-owed[m.id]; });
+    const transfers = computeTransfers(net);
+    const prefix = cur==='TWD' ? 'NT$' : '';
+    const suffix = cur==='TWD' ? '' : ' '+cur;
+
+    const rows = members.map(m=>{
+      if(Math.abs(paid[m.id])<0.01 && Math.abs(owed[m.id])<0.01) return '';
+      return `
+      <div class="settlerow">
+        <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}</div>
+        <div style="text-align:right">
+          <div class="mono" style="font-weight:700;color:${net[m.id]>=0?'var(--owed)':'var(--owe)'}">${net[m.id]>=0? '+':''}${fmt(net[m.id])}${suffix}</div>
+          <div class="hint">實付 ${prefix}${fmt(paid[m.id])}${suffix} ／ 應付 ${prefix}${fmt(owed[m.id])}${suffix}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    const transferRows = transfers.map(t=>`
+      <div class="transfer">
+        <div style="flex:1">${memberName(t.from)}</div>
+        <div class="arrow">→</div>
+        <div style="flex:1">${memberName(t.to)}</div>
+        <div class="mono" style="font-weight:700">${prefix}${fmt(t.amt)}${suffix}</div>
+      </div>`).join('') || `<div class="hint">此幣別已打平，不需轉帳。</div>`;
+
+    cardsHtml += `
+    <div class="card">
+      <h2>${cur==='TWD'? '台幣 TWD':cur+' 現金／消費'}</h2>
+      ${rows || `<div class="hint">此幣別無相關收支</div>`}
+      <div class="stub">
+        <h2 style="margin-bottom:8px">建議轉帳</h2>
+        ${transferRows}
+      </div>
+    </div>`;
+
+    allSummaryLines.push(`【${cur==='TWD'?'台幣':cur}】`);
+    members.forEach(m=>{
+      const n = net[m.id];
+      if(Math.abs(n)<0.01) return;
+      allSummaryLines.push(`${m.name}：${n>=0?'應收':'應付'} ${prefix}${fmt(Math.abs(n))}${suffix}`);
+    });
+    if(transfers.length===0) allSummaryLines.push('已打平，無需轉帳');
+    transfers.forEach(t=> allSummaryLines.push(`${memberName(t.from)} → ${memberName(t.to)}：${prefix}${fmt(t.amt)}${suffix}`));
+    allSummaryLines.push('');
+  });
+
+  const summaryText = allSummaryLines.join('\n');
+
+  return `
+  <div class="banner">💡 每種幣別分開計算淨額與轉帳建議，適合還在當地、想直接用現金找補的情況。</div>
+  ${unresolved.length>0? `<div class="banner">⚠️ 有 ${unresolved.length} 筆支出的幣別尚未確定（現金沒填幣別，或刷卡未填外幣金額），暫時無法分幣別結算，請先到「記帳」補上資料，或改用「折合台幣結算」檢視。</div>`:''}
+  ${cardsHtml}
+  <button class="btn ghost block" onclick="copySummary()">📋 複製結算文字</button>
+  <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${summaryText}</textarea>
+  `;
+}
+
 function copySummary(){
   const ta = document.getElementById('summaryTextHidden');
   ta.select(); ta.setSelectionRange(0,99999);
