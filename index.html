@@ -500,7 +500,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2b1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2b2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -844,7 +844,6 @@ function bindBenefCheckboxHandlers(){
 
 function renderExpenseModal(d, isEdit){
   const subcatOptions = (subcats||[]).map(s=>`<option value="${s}">`).join('');
-  const currencyOptions = (currencies||[]).map(c=>`<option value="${c}">`).join('');
   const catBtns = CATS.map(c=>`
     <div class="catbtn ${d.mainCat===c.id?'sel':''}" data-cat="${c.id}">
       <span class="ic">${c.ic}</span>${c.label}
@@ -893,8 +892,10 @@ function renderExpenseModal(d, isEdit){
 
       <div id="cardFields" style="display:${d.paymethod==='card'?'block':'none'}">
         <label>幣別</label>
-        <input type="text" id="fCurrency" list="currencyList" value="${d.currency==='TWD'?'':d.currency}" placeholder="例如 JPY，台幣消費可留空">
-        <datalist id="currencyList">${currencyOptions}</datalist>
+        <select id="fCurrency">
+          <option value="">台幣（刷卡）</option>
+          ${ratePageCurrencies().map(c=>`<option value="${c}" ${d.currency===c?'selected':''}>${c}</option>`).join('')}
+        </select>
         <label>外幣金額（選填，方便對帳）</label>
         <input type="number" id="fForeignCard" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 5000">
         <label>台幣金額（信用卡帳單金額，可先留空之後再補）</label>
