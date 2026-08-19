@@ -500,7 +500,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a3 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a4 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -754,12 +754,15 @@ function openExpenseModal(id){
    Used to decide whether the beneficiary split is entered in foreign currency or TWD. ---- */
 function computeFxContextFromDraft(d){
   if(d.paymethod==='cash'){
-    const currency = d.currency && d.currency!=='TWD' && d.currency!=='外幣' ? d.currency : '';
-    const foreignAmount = currency ? (d.foreignAmount||0) : 0;
-    if(currency){
-      return {isForeign: foreignAmount>0, currency, rate:getRate(currency), foreignTotal:foreignAmount};
+    if(d.currency && d.currency!=='TWD' && d.currency!=='外幣'){
+      const foreignAmount = d.foreignAmount||0;
+      return {isForeign:true, currency:d.currency, rate:getRate(d.currency), foreignTotal:foreignAmount};
     }
-    return {isForeign: (d.foreignAmount||0)>0, currency:'外幣', rate:null, foreignTotal:d.foreignAmount||0};
+    if(d.currency==='外幣' && (d.foreignAmount||0)>0){
+      // 舊資料：曾經記過金額，但當時幣別尚未確定
+      return {isForeign:true, currency:'外幣', rate:null, foreignTotal:d.foreignAmount||0};
+    }
+    return {isForeign:false, currency:'TWD', rate:1, foreignTotal:0};
   } else {
     const currency = d.currency && d.currency!=='TWD' ? d.currency : '';
     const foreignAmount = currency ? (d.foreignAmount||0) : 0;
@@ -775,11 +778,11 @@ function computeFxContext(){
   const paymethod = pmEl ? pmEl.dataset.pm : 'card';
   if(paymethod==='cash'){
     const currency = (document.getElementById('fCurrencyCash')?.value||'').trim().toUpperCase();
-    const foreignAmount = parseFloat(document.getElementById('fForeignCash')?.value) || 0;
+    const amountInput = parseFloat(document.getElementById('fForeignCash')?.value) || 0;
     if(currency){
-      return {isForeign: foreignAmount>0, currency, rate:getRate(currency), foreignTotal:foreignAmount};
+      return {isForeign:true, currency, rate:getRate(currency), foreignTotal:amountInput};
     }
-    return {isForeign: foreignAmount>0, currency:'外幣', rate:null, foreignTotal:foreignAmount};
+    return {isForeign:false, currency:'TWD', rate:1, foreignTotal:0};
   } else {
     const currency = (document.getElementById('fCurrency')?.value||'').trim().toUpperCase();
     const foreignAmount = parseFloat(document.getElementById('fForeignCard')?.value) || 0;
@@ -883,8 +886,8 @@ function renderExpenseModal(d, isEdit){
           <option value="">台幣（現金）</option>
           ${ratePageCurrencies().map(c=>`<option value="${c}" ${d.currency===c?'selected':''}>${c}</option>`).join('')}
         </select>
-        <label>外幣金額</label>
-        <input type="number" id="fForeignCash" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 1200">
+        <label id="fCashAmountLabel">${d.currency && d.currency!=='TWD' && d.currency!=='外幣' ? '外幣金額' : '金額（台幣）'}</label>
+        <input type="number" id="fForeignCash" value="${d.currency && d.currency!=='TWD' ? d.foreignAmount : (d.twdAmount||'')}" placeholder="例如 1200">
         <div id="cashRateHint" class="hint"></div>
       </div>
 
@@ -944,9 +947,11 @@ function renderExpenseModal(d, isEdit){
 }
 
 function refreshCashRateHint(){
+  const labelEl = document.getElementById('fCashAmountLabel');
+  const cur = (document.getElementById('fCurrencyCash')?.value||'').trim().toUpperCase();
+  if(labelEl) labelEl.textContent = cur ? '外幣金額' : '金額（台幣）';
   const hintEl = document.getElementById('cashRateHint');
   if(!hintEl) return;
-  const cur = (document.getElementById('fCurrencyCash')?.value||'').trim().toUpperCase();
   if(!cur){ hintEl.textContent=''; return; }
   const rate = getRate(cur);
   hintEl.textContent = rate!=null
@@ -970,8 +975,9 @@ function saveExpense(id){
 
   if(paymethod==='cash'){
     currency = document.getElementById('fCurrencyCash').value.trim().toUpperCase();
-    foreignAmount = parseFloat(document.getElementById('fForeignCash').value) || 0;
+    const amountInput = parseFloat(document.getElementById('fForeignCash').value) || 0;
     if(currency){
+      foreignAmount = amountInput;
       const rate = getRate(currency);
       if(rate!=null){
         twdAmount = foreignAmount * rate;
@@ -981,9 +987,10 @@ function saveExpense(id){
         status = 'estimated';
       }
     } else {
-      currency = foreignAmount? '外幣':'TWD';
-      twdAmount = 0;
-      status = 'estimated';
+      currency = 'TWD';
+      foreignAmount = 0;
+      twdAmount = amountInput;
+      status = 'confirmed';
     }
   } else {
     currency = document.getElementById('fCurrency').value.trim().toUpperCase() || 'TWD';
