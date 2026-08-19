@@ -500,7 +500,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a4 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2b1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -714,7 +714,7 @@ function renderExpenses(){
   const sorted = [...expenses].sort((a,b)=> b.date.localeCompare(a.date) || 0);
   const byDate = {};
   sorted.forEach(e=>{ (byDate[e.date] = byDate[e.date]||[]).push(e); });
-  let html = '';
+  let html = `<button class="btn ghost block" style="margin-bottom:12px" onclick="exportExpensesCSV()">📤 匯出支出明細 CSV</button>`;
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
     html += `<div class="datehead">${date}</div><div class="card" style="padding:4px 16px;">`;
     byDate[date].forEach(e=>{
@@ -1058,6 +1058,55 @@ function saveExpense(id){
 function deleteExpense(id){
   if(!confirm('確定刪除這筆支出？')) return;
   tripRef().collection('expenses').doc(id).delete().then(()=> closeModal());
+}
+
+/* ============ Export CSV ============ */
+function csvEscape(val){
+  const s = (val===null || val===undefined) ? '' : String(val);
+  if(/[",\r\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+function exportExpensesCSV(){
+  if(expenses.length===0){ alert('尚無支出資料可匯出'); return; }
+  const headers = ['日期','標題','主分類','次分類','付款方式','幣別','支出外幣金額','支出台幣金額','對帳狀態','付款人','受益人','受益人分攤金額(台幣)','受益人分攤金額(原幣別)'];
+  const rows = [headers];
+  const sorted = [...expenses].sort((a,b)=> a.date.localeCompare(b.date));
+  sorted.forEach(e=>{
+    const payer = memberName(e.payerId);
+    const totalTwd = Math.round((liveTwdAmount(e)+Number.EPSILON)*10)/10;
+    const statusLabel = liveStatus(e)==='confirmed' ? '已確認' : '估算中';
+    const pmLabel = e.paymethod==='cash' ? '現金' : '信用卡';
+    (e.beneficiaries||[]).forEach(b=>{
+      const benefTwd = Math.round((liveBenefTwd(e,b)+Number.EPSILON)*10)/10;
+      const benefForeign = (e.currency && e.currency!=='TWD' && b.foreignAmount!=null) ? b.foreignAmount : '';
+      rows.push([
+        e.date,
+        e.title || catLabel(e.mainCat),
+        catLabel(e.mainCat),
+        e.subCat || '',
+        pmLabel,
+        e.currency || 'TWD',
+        (e.currency && e.currency!=='TWD') ? e.foreignAmount : '',
+        totalTwd,
+        statusLabel,
+        payer,
+        memberName(b.memberId),
+        benefTwd,
+        benefForeign
+      ]);
+    });
+  });
+  const csvContent = rows.map(r=> r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csvContent], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${tripName||'旅費帳本'}_支出明細_${todayStr()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=> URL.revokeObjectURL(url), 1000);
+  toast('已匯出 CSV');
 }
 
 /* ============ Settlement ============ */
