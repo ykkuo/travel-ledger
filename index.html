@@ -93,6 +93,14 @@
   .transfer .arrow{color:var(--brass); font-weight:700;}
   .footer-actions{display:flex; gap:8px; margin-top:14px;}
   .hint{font-size:11px; color:var(--gray); margin-top:4px;}
+  .analysis-donut-wrap{display:flex; justify-content:center; margin:6px 0 14px;}
+  .legend-row{display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px;}
+  .legend-row:last-child{border-bottom:none;}
+  .legend-dot{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
+  .barrow{margin:12px 0;}
+  .barrow .barlabel{display:flex; justify-content:space-between; align-items:center; font-size:13px; margin-bottom:5px;}
+  .bartrack{background:var(--paper-dim); border-radius:6px; height:10px; overflow:hidden;}
+  .barfill{height:100%; border-radius:6px; background:var(--teal);}
   .toast{position:fixed; bottom:100px; left:50%; transform:translateX(-50%); background:var(--teal); color:var(--paper); padding:10px 18px; border-radius:20px; font-size:13px; z-index:200; box-shadow:0 4px 12px rgba(0,0,0,.3);}
   .home-wrap{min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px;}
   .home-card{background:var(--paper); border-radius:18px; padding:26px 22px; max-width:400px; width:100%; box-shadow:0 8px 30px rgba(0,0,0,.35);}
@@ -500,7 +508,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2b2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3a1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -512,6 +520,7 @@ function renderShell(mainHtml, isHome){
     <div class="item" data-view="expenses"><span class="ic">📒</span>記帳</div>
     <div class="item" data-view="fx"><span class="ic">💱</span>匯率</div>
     <div class="item" data-view="settle"><span class="ic">🧾</span>結算</div>
+    <div class="item" data-view="analysis"><span class="ic">📊</span>分析</div>
     <div class="item" data-view="members"><span class="ic">👨‍👩‍👧‍👦</span>成員</div>
   </nav>
   <div id="modalRoot"></div>`;
@@ -530,6 +539,7 @@ function render(){
   if(currentView==='expenses') html = renderExpenses();
   else if(currentView==='fx') html = renderRates();
   else if(currentView==='settle') html = renderSettle();
+  else if(currentView==='analysis') html = renderAnalysis();
   else if(currentView==='members') html = renderMembers();
   renderShell(html, false);
 }
@@ -1108,6 +1118,107 @@ function exportExpensesCSV(){
   a.remove();
   setTimeout(()=> URL.revokeObjectURL(url), 1000);
   toast('已匯出 CSV');
+}
+
+/* ============ Analysis ============ */
+const CAT_COLORS = {stay:'var(--teal)', food:'var(--brass)', transport:'var(--owe)', other:'var(--owed)'};
+
+function renderCategoryDonut(categoryTotals, total){
+  if(total<=0) return '';
+  const r=54, strokeW=26, cx=70, cy=70, circumference=2*Math.PI*r;
+  let offset=0;
+  let segs='';
+  CATS.forEach(c=>{
+    const amt = categoryTotals[c.id]||0;
+    if(amt<=0) return;
+    const pct = amt/total;
+    const dash = pct*circumference;
+    segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${CAT_COLORS[c.id]}" stroke-width="${strokeW}" stroke-dasharray="${dash.toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    offset += dash;
+  });
+  return `<svg viewBox="0 0 140 140" width="180" height="180">
+    ${segs}
+    <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="11" fill="var(--gray)" font-family="'Noto Sans TC',sans-serif">支出總額</text>
+    <text x="${cx}" y="${cy+14}" text-anchor="middle" font-size="14" font-weight="700" fill="var(--teal)" font-family="'Roboto Mono',monospace">NT$${fmt(total)}</text>
+  </svg>`;
+}
+
+function renderAnalysis(){
+  if(expenses.length===0){
+    return `<div class="empty"><div class="big">📊</div>還沒有支出資料可以分析</div>`;
+  }
+
+  // 依分類統計（支出總額，即時換算台幣）
+  const categoryTotals = {};
+  CATS.forEach(c=> categoryTotals[c.id]=0);
+  let grandTotal = 0;
+  expenses.forEach(e=>{
+    const amt = liveTwdAmount(e);
+    categoryTotals[e.mainCat] = (categoryTotals[e.mainCat]||0) + amt;
+    grandTotal += amt;
+  });
+
+  const donutSvg = renderCategoryDonut(categoryTotals, grandTotal);
+  const catRows = CATS.map(c=>{
+    const amt = categoryTotals[c.id]||0;
+    if(amt<=0) return '';
+    const pct = grandTotal>0 ? (amt/grandTotal*100) : 0;
+    return `
+    <div class="legend-row">
+      <span class="legend-dot" style="background:${CAT_COLORS[c.id]}"></span>
+      <span style="flex:1">${c.ic} ${c.label}</span>
+      <span class="mono">NT$${fmt(amt)}</span>
+      <span class="hint" style="width:46px;text-align:right;margin-top:0">${fmt(pct)}%</span>
+    </div>`;
+  }).join('') || `<div class="hint">尚無分類資料</div>`;
+
+  // 依成員統計（實付 & 分攤/花費，即時換算台幣）
+  const paid = {}, share = {};
+  members.forEach(m=>{ paid[m.id]=0; share[m.id]=0; });
+  expenses.forEach(e=>{
+    const amt = liveTwdAmount(e);
+    if(paid[e.payerId]!==undefined) paid[e.payerId]+=amt;
+    (e.beneficiaries||[]).forEach(b=>{
+      if(share[b.memberId]!==undefined) share[b.memberId]+=liveBenefTwd(e,b);
+    });
+  });
+
+  const sortedMembers = [...members].sort((a,b)=> (share[b.id]||0)-(share[a.id]||0));
+  const maxShare = Math.max(1, ...sortedMembers.map(m=>share[m.id]||0));
+  const memberBars = sortedMembers.map(m=>{
+    const s = share[m.id]||0;
+    const pctOfMax = maxShare>0 ? (s/maxShare*100) : 0;
+    const pctOfTotal = grandTotal>0 ? (s/grandTotal*100) : 0;
+    return `
+    <div class="barrow">
+      <div class="barlabel"><span>${m.name}</span><span class="mono">NT$${fmt(s)}（${fmt(pctOfTotal)}%）</span></div>
+      <div class="bartrack"><div class="barfill" style="width:${pctOfMax}%"></div></div>
+    </div>`;
+  }).join('') || `<div class="hint">尚無成員資料</div>`;
+
+  const memberTableRows = sortedMembers.map(m=>`
+    <div class="settlerow">
+      <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}</div>
+      <div style="text-align:right">
+        <div class="mono" style="font-weight:700">NT$${fmt(share[m.id]||0)}</div>
+        <div class="hint">實付 ${fmt(paid[m.id]||0)}</div>
+      </div>
+    </div>`).join('');
+
+  return `
+  <div class="card">
+    <h2>依分類統計佔比</h2>
+    <div class="analysis-donut-wrap">${donutSvg}</div>
+    ${catRows}
+  </div>
+  <div class="card">
+    <h2>依成員統計花費</h2>
+    ${memberBars}
+    <div class="stub">
+      <h2 style="margin-bottom:8px">明細（花費／實付）</h2>
+      ${memberTableRows}
+    </div>
+  </div>`;
 }
 
 /* ============ Settlement ============ */
