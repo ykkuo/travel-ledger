@@ -100,6 +100,7 @@
   .home-sub{text-align:center; color:var(--gray); font-size:13px; margin-bottom:22px;}
   .namechip{border:1px solid var(--line); background:#fff; border-radius:12px; padding:12px 14px; margin-bottom:8px; cursor:pointer; display:flex; align-items:center; gap:10px; font-size:14.5px;}
   .namechip:active{background:var(--paper-dim);}
+  .namechip.claimedother{opacity:.6;}
   .divider{display:flex; align-items:center; gap:10px; margin:18px 0; color:var(--gray); font-size:12px;}
   .divider::before,.divider::after{content:""; flex:1; height:1px; background:var(--line);}
   .codebig{font-family:'Roboto Mono',monospace; font-size:28px; font-weight:700; letter-spacing:4px; text-align:center; color:var(--teal); margin:10px 0;}
@@ -133,6 +134,7 @@ const CATS = [
   {id:'transport', label:'交通', ic:'🚗'},
   {id:'other', label:'其他', ic:'🎒'},
 ];
+const TRIP_ICONS = ['📒','🧳','✈️','🏖️','🗺️','⛰️','🚗','🎒','🍜','📸','🚂','🛳️','🏕️','🎡','🗽'];
 function catIcon(id){ const c = CATS.find(x=>x.id===id); return c? c.ic : '🎒'; }
 function catLabel(id){ const c = CATS.find(x=>x.id===id); return c? c.label : '其他'; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -181,7 +183,7 @@ function liveStatus(e){
 }
 
 /* ============ Global runtime state ============ */
-let tripId=null, tripName='', tripOwnerUid=null, myMemberId=null, myMemberName=null;
+let tripId=null, tripName='', tripIcon='📒', tripOwnerUid=null, myMemberId=null, myMemberName=null;
 let members=[], expenses=[], subcats=[], currencies=[], currencyRates={};
 let unsubs=[];
 let currentView='expenses';
@@ -253,7 +255,7 @@ function renderHomeInner(prefillCode, isGoogle, myTrips){
     ${myTrips.map(t=>`
       <div class="namechip" style="justify-content:space-between">
         <div onclick="switchToMyTrip('${t.id}')" style="flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0">
-          <div class="avatar" style="width:26px;height:26px;font-size:13px">📒</div>
+          <div class="avatar" style="width:26px;height:26px;font-size:13px">${t.icon||'📒'}</div>
           <div style="min-width:0">
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
             <div class="hint">邀請碼 ${t.id}</div>
@@ -340,7 +342,7 @@ function createTrip(){
   if(!name){ alert('請輸入旅程名稱'); return; }
   const code = genCode();
   db.collection('trips').doc(code).set({
-    name, createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[], currencyRates:{},
+    name, icon:'📒', createdAt: firebase.firestore.FieldValue.serverTimestamp(), subcats:[], currencies:[], currencyRates:{},
     ownerUid: auth.currentUser.uid
   }).then(()=>{
     tripId = code; tripName = name;
@@ -364,10 +366,28 @@ function renderNamePicker(isCreator){
   pendingIsCreator = isCreator;
   db.collection('trips').doc(tripId).collection('members').get().then(snap=>{
     const existing = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    const chips = existing.map(m=>`
-      <div class="namechip" onclick="pickMember('${m.id}','${m.name.replace(/'/g,"\\'")}')">
+
+    /* 自動恢復身份：如果這個瀏覽器/帳號（uid）先前已經認領過此旅程裡的某個成員，
+       就直接以該身份繼續，不再顯示選人畫面，避免誤選成別人。 */
+    const mine = auth.currentUser ? existing.find(m=> m.claimedUid && m.claimedUid===auth.currentUser.uid) : null;
+    if(mine){
+      pendingIsCreator = false;
+      pickMember(mine.id, mine.name);
+      return;
+    }
+
+    const chips = existing.map(m=>{
+      const claimedByOther = !!(m.claimedUid && auth.currentUser && m.claimedUid!==auth.currentUser.uid);
+      const nameEsc = m.name.replace(/'/g,"\\'");
+      const clickFn = claimedByOther
+        ? `confirmClaimOther('${m.id}','${nameEsc}')`
+        : `pickMember('${m.id}','${nameEsc}')`;
+      return `
+      <div class="namechip ${claimedByOther?'claimedother':''}" onclick="${clickFn}">
         <div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}
-      </div>`).join('');
+        ${claimedByOther? ' <span class="hint">（可能已有人在用，點擊需確認）</span>':''}
+      </div>`;
+    }).join('');
     const html = `
     <div class="home-wrap">
       <div class="home-card">
@@ -385,12 +405,21 @@ function renderNamePicker(isCreator){
   });
 }
 
+function confirmClaimOther(id, name){
+  if(confirm(`「${name}」這個身份似乎已經有其他裝置在使用了。\n\n如果這其實就是你自己（例如你換了瀏覽器或清除過資料），可以繼續；如果這是旅伴的名字，請不要選它，改選你自己的名字或在下方新增。\n\n確定要以「${name}」的身份繼續嗎？`)){
+    pickMember(id, name);
+  }
+}
+
 function pickMember(id, name){
   myMemberId = id; myMemberName = name;
   if(pendingIsCreator && tripId){
     db.collection('trips').doc(tripId).update({creatorMemberId:id}).catch(()=>{});
   }
   pendingIsCreator = false;
+  if(auth.currentUser){
+    tripRef().collection('members').doc(id).set({claimedUid: auth.currentUser.uid}, {merge:true}).catch(()=>{});
+  }
   localStorage.setItem(LOCAL_KEY, JSON.stringify({tripId, memberId:id, memberName:name}));
   enterTrip();
 }
@@ -398,7 +427,9 @@ function addAndPickMember(){
   const name = document.getElementById('myName').value.trim();
   if(!name){ alert('請輸入名字'); return; }
   const id = uid();
-  db.collection('trips').doc(tripId).collection('members').doc(id).set({name}).then(()=>{
+  const data = {name};
+  if(auth.currentUser) data.claimedUid = auth.currentUser.uid;
+  tripRef().collection('members').doc(id).set(data).then(()=>{
     pickMember(id, name);
   });
 }
@@ -413,6 +444,7 @@ function enterTrip(){
   unsubs.push(tripRef().onSnapshot(doc=>{
     if(doc.exists){
       tripName = doc.data().name || tripName;
+      tripIcon = doc.data().icon || '📒';
       subcats = doc.data().subcats || [];
       currencies = doc.data().currencies || [];
       currencyRates = doc.data().currencyRates || {};
@@ -422,7 +454,7 @@ function enterTrip(){
       alert('這個旅程已被刪除');
       localStorage.removeItem(LOCAL_KEY);
       unsubs.forEach(u=>u()); unsubs=[];
-      tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null;
+      tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null; tripIcon='📒';
       renderHome();
     }
   }));
@@ -442,7 +474,7 @@ function leaveTrip(){
   if(!confirm('離開這個旅程？（資料不會刪除，之後可用邀請碼重新加入）')) return;
   localStorage.removeItem(LOCAL_KEY);
   unsubs.forEach(u=>u()); unsubs=[];
-  tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={};
+  tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripIcon='📒';
   renderHome();
 }
 
@@ -465,10 +497,10 @@ function renderShell(mainHtml, isHome){
   <header class="app">
     <h1>旅費帳本</h1>
     <div class="sub">
-      ${tripName || ''}
+      ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v2a2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v2a3 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -522,6 +554,13 @@ function renderMembers(){
   <div class="card">
     <h2>旅程資訊</h2>
     <div class="row">
+      <div>旅程圖示</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:20px">${tripIcon}</span>
+        <button class="btn ghost sm" onclick="openIconPicker()">變更</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
       <div>旅程名稱</div>
       <div style="display:flex;align-items:center;gap:6px;text-align:right">
         ${tripName}
@@ -536,7 +575,7 @@ function renderMembers(){
     <h2>刪除整個旅程</h2>
     ${isOwner()
       ? `<div class="hint">你是這趟旅程的建立者，可以永久刪除整個旅程與所有記帳資料（其他成員也會一併移除）。此動作無法復原。</div>
-         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除這個旅程</button>`
+         <button class="btn danger block" style="margin-top:10px" onclick="deleteTrip()">刪除</button>`
       : `<div class="hint">只有建立這趟旅程的人可以刪除整個旅程，避免其他成員誤刪大家的資料。你可以用上方「離開這個旅程」退出。</div>`
     }
   </div>`;
@@ -554,6 +593,28 @@ function removeMember(id){
 }
 function memberName(id){ const m = members.find(x=>x.id===id); return m? m.name : '（已刪除成員）'; }
 function isOwner(){ return auth.currentUser && tripOwnerUid && auth.currentUser.uid === tripOwnerUid; }
+
+function openIconPicker(){
+  const html = `
+  <div class="modal-bg" id="iconModalBg">
+    <div class="modal modal-wrap">
+      <button class="close" onclick="closeModal()">✕</button>
+      <h2>選擇旅程圖示</h2>
+      <div class="catgrid" style="grid-template-columns:repeat(5,1fr);margin-top:8px">
+        ${TRIP_ICONS.map(ic=>`
+          <div class="catbtn ${ic===tripIcon?'sel':''}" style="font-size:22px;padding:14px 4px" onclick="setTripIcon('${ic}')">${ic}</div>
+        `).join('')}
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modalRoot').innerHTML = html;
+}
+function setTripIcon(icon){
+  tripRef().update({icon}).then(()=>{
+    closeModal();
+    toast('已更新旅程圖示');
+  }).catch(err=> alert('更新失敗：'+err.message));
+}
 
 function deleteTrip(){
   const typed = prompt(`此操作會永久刪除「${tripName}」的所有記帳、成員、匯率資料，且無法復原。\n請輸入旅程名稱「${tripName}」以確認刪除：`);
@@ -579,7 +640,7 @@ function deleteTrip(){
   }).then(()=>{
     localStorage.removeItem(LOCAL_KEY);
     unsubs.forEach(u=>u()); unsubs=[];
-    tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null;
+    tripId=null; myMemberId=null; myMemberName=null; members=[]; expenses=[]; subcats=[]; currencies=[]; currencyRates={}; tripOwnerUid=null; tripIcon='📒';
     renderHome();
     toast('旅程已刪除');
   }).catch(err=> alert('刪除失敗：'+err.message));
