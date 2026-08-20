@@ -35,6 +35,7 @@
   .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; background:var(--teal); color:var(--paper); border:none; border-radius:10px; padding:11px 16px; font-size:14px; font-weight:500; cursor:pointer;}
   .btn.brass{background:var(--brass); color:var(--teal-deep); font-weight:700;}
   .btn.ghost{background:transparent; color:var(--teal); border:1px solid var(--line);}
+  .btn.ghost.on-dark{color:var(--brass-light); border-color:rgba(228,200,119,.4);}
   .btn.danger{background:transparent; color:var(--owe); border:1px solid var(--owe);}
   .btn.block{width:100%;}
   .btn.sm{padding:6px 10px; font-size:12px; border-radius:8px;}
@@ -42,7 +43,8 @@
   .fab{position:fixed; right:18px; bottom:88px; width:56px; height:56px; border-radius:50%; background:var(--brass); color:var(--teal-deep); font-size:28px; border:none; box-shadow:0 4px 14px rgba(0,0,0,.35); cursor:pointer; z-index:40; line-height:0;}
   nav.bottom{position:fixed; bottom:0; left:0; right:0; background:var(--teal-deep); border-top:1px solid rgba(228,200,119,.15); display:flex; z-index:30; padding-bottom:env(safe-area-inset-bottom);}
   nav.bottom .item{flex:1; text-align:center; padding:10px 2px 8px; color:rgba(246,241,228,.5); font-size:11px; cursor:pointer;}
-  nav.bottom .item .ic{font-size:19px; display:block; margin-bottom:2px;}
+  nav.bottom .item .ic{display:flex; align-items:center; justify-content:center; margin-bottom:3px;}
+  nav.bottom .item .ic svg{width:21px; height:21px; display:block;}
   nav.bottom .item.active{color:var(--brass-light);}
   label{display:block; font-size:12px; color:var(--gray); margin:10px 0 4px; font-weight:500;}
   input[type=text],input[type=number],input[type=date],select,textarea{width:100%; padding:10px 11px; border-radius:9px; border:1px solid var(--line); background:#fff; font-size:14px; font-family:inherit; color:var(--ink);}
@@ -87,7 +89,7 @@
   .stub::before{left:-24px;} .stub::after{right:-24px;}
   .settlerow{display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line); font-size:14px;}
   .settlerow:last-child{border-bottom:none;}
-  .banner{background:rgba(200,155,60,.15); border:1px solid var(--brass); border-radius:10px; padding:10px 12px; font-size:12.5px; color:#6b501a; margin-bottom:12px;}
+  .banner{background:var(--paper-dim); border:1px solid var(--brass); border-radius:10px; padding:10px 12px; font-size:12.5px; color:#6b501a; margin-bottom:12px;}
   .transfer{display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--line); font-size:14px;}
   .transfer:last-child{border-bottom:none;}
   .transfer .arrow{color:var(--brass); font-weight:700;}
@@ -143,6 +145,13 @@ const CATS = [
   {id:'other', label:'其他', ic:'🎒'},
 ];
 const TRIP_ICONS = ['📒','🧳','✈️','🏖️','🗺️','⛰️','🚗','🎒','🍜','📸','🚂','🛳️','🏕️','🎡','🗽'];
+const NAV_ICONS = {
+  expenses: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5C4 3.67 4.67 3 5.5 3H12v18H5.5A1.5 1.5 0 0 1 4 19.5v-15Z"/><path d="M20 4.5C20 3.67 19.33 3 18.5 3H12v18h6.5a1.5 1.5 0 0 0 1.5-1.5v-15Z"/><path d="M8 7h2M8 10h2M14 7h2M14 10h2"/></svg>`,
+  fx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M17 8l-3-3M17 8l-3 3"/><path d="M20 16H7M7 16l3-3M7 16l3 3"/></svg>`,
+  settle: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 9h6M9 13l2 2 4-4"/></svg>`,
+  analysis: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V12M11 19V6M17 19v-4"/><path d="M3 19h18"/></svg>`,
+  members: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M14.8 14.2c2.5.2 4.2 2 4.7 4.3"/></svg>`
+};
 function catIcon(id){ const c = CATS.find(x=>x.id===id); return c? c.ic : '🎒'; }
 function catLabel(id){ const c = CATS.find(x=>x.id===id); return c? c.label : '其他'; }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -508,7 +517,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3a1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3b1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -517,11 +526,11 @@ function renderShell(mainHtml, isHome){
   <main id="main">${mainHtml}</main>
   <button class="fab" id="fabAdd" title="新增支出">＋</button>
   <nav class="bottom">
-    <div class="item" data-view="expenses"><span class="ic">📒</span>記帳</div>
-    <div class="item" data-view="fx"><span class="ic">💱</span>匯率</div>
-    <div class="item" data-view="settle"><span class="ic">🧾</span>結算</div>
-    <div class="item" data-view="analysis"><span class="ic">📊</span>分析</div>
-    <div class="item" data-view="members"><span class="ic">👨‍👩‍👧‍👦</span>成員</div>
+    <div class="item" data-view="expenses"><span class="ic">${NAV_ICONS.expenses}</span>記帳</div>
+    <div class="item" data-view="fx"><span class="ic">${NAV_ICONS.fx}</span>匯率</div>
+    <div class="item" data-view="settle"><span class="ic">${NAV_ICONS.settle}</span>結算</div>
+    <div class="item" data-view="analysis"><span class="ic">${NAV_ICONS.analysis}</span>分析</div>
+    <div class="item" data-view="members"><span class="ic">${NAV_ICONS.members}</span>成員</div>
   </nav>
   <div id="modalRoot"></div>`;
   document.querySelectorAll('nav.bottom .item').forEach(el=>{
@@ -724,7 +733,7 @@ function renderExpenses(){
   const sorted = [...expenses].sort((a,b)=> b.date.localeCompare(a.date) || 0);
   const byDate = {};
   sorted.forEach(e=>{ (byDate[e.date] = byDate[e.date]||[]).push(e); });
-  let html = `<button class="btn ghost block" style="margin-bottom:12px" onclick="exportExpensesCSV()">📤 匯出支出明細 CSV</button>`;
+  let html = `<button class="btn ghost on-dark block" style="margin-bottom:12px" onclick="exportExpensesCSV()">📤 匯出支出明細 CSV</button>`;
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
     html += `<div class="datehead">${date}</div><div class="card" style="padding:4px 16px;">`;
     byDate[date].forEach(e=>{
@@ -1136,10 +1145,18 @@ function renderCategoryDonut(categoryTotals, total){
     segs += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${CAT_COLORS[c.id]}" stroke-width="${strokeW}" stroke-dasharray="${dash.toFixed(2)} ${circumference.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
     offset += dash;
   });
+  // 中心文字：不顯示「NT$」、金額取整數，並依字數動態縮小字級，避免長數字超出內圈範圍
+  const innerDiameter = (r - strokeW/2) * 2; // 內圈可用寬度（約 82）
+  const availWidth = innerDiameter - 10; // 保留一點邊距
+  const totalLabel = fmt(Math.round(total));
+  const baseFontSize = 15;
+  const minFontSize = 9;
+  const estFontSize = availWidth / (totalLabel.length * 0.6);
+  const valueFontSize = Math.max(minFontSize, Math.min(baseFontSize, estFontSize)).toFixed(1);
   return `<svg viewBox="0 0 140 140" width="180" height="180">
     ${segs}
-    <text x="${cx}" y="${cy-4}" text-anchor="middle" font-size="11" fill="var(--gray)" font-family="'Noto Sans TC',sans-serif">支出總額</text>
-    <text x="${cx}" y="${cy+14}" text-anchor="middle" font-size="14" font-weight="700" fill="var(--teal)" font-family="'Roboto Mono',monospace">NT$${fmt(total)}</text>
+    <text x="${cx}" y="${cy-6}" text-anchor="middle" font-size="11" fill="var(--gray)" font-family="'Noto Sans TC',sans-serif">支出總額</text>
+    <text x="${cx}" y="${cy+15}" text-anchor="middle" font-size="${valueFontSize}" font-weight="700" fill="var(--teal)" font-family="'Roboto Mono',monospace">${totalLabel}</text>
   </svg>`;
 }
 
@@ -1300,7 +1317,7 @@ function renderSettleTWD(){
       ${transferRows}
     </div>
   </div>
-  <button class="btn ghost block" onclick="copySummary()">📋 複製結算文字</button>
+  <button class="btn ghost on-dark block" onclick="copySummary()">📋 複製結算文字</button>
   <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${summaryText}</textarea>
   `;
 }
@@ -1431,7 +1448,7 @@ function renderSettleByCurrency(){
   <div class="banner">💡 每種幣別分開計算淨額與轉帳建議，適合還在當地、想直接用現金找補的情況。</div>
   ${unresolved.length>0? `<div class="banner">⚠️ 有 ${unresolved.length} 筆支出的幣別尚未確定（現金沒填幣別，或刷卡未填外幣金額），暫時無法分幣別結算，請先到「記帳」補上資料，或改用「折合台幣結算」檢視。</div>`:''}
   ${cardsHtml}
-  <button class="btn ghost block" onclick="copySummary()">📋 複製結算文字</button>
+  <button class="btn ghost on-dark block" onclick="copySummary()">📋 複製結算文字</button>
   <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${summaryText}</textarea>
   `;
 }
