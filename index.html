@@ -157,7 +157,7 @@ const NAV_ICONS = {
   fx: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M17 8l-3-3M17 8l-3 3"/><path d="M20 16H7M7 16l3-3M7 16l3 3"/></svg>`,
   settle: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 9h6M9 13l2 2 4-4"/></svg>`,
   analysis: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V12M11 19V6M17 19v-4"/><path d="M3 19h18"/></svg>`,
-  members: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M14.8 14.2c2.5.2 4.2 2 4.7 4.3"/></svg>`
+  members: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82A1.65 1.65 0 0 0 3 13.09H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`
 };
 function catIcon(id){ const c = CATS.find(x=>x.id===id); return c? c.ic : '🎒'; }
 function catLabel(id){ const c = CATS.find(x=>x.id===id); return c? c.label : '其他'; }
@@ -574,7 +574,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3c1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3c2 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -585,9 +585,9 @@ function renderShell(mainHtml, isHome){
   <nav class="bottom">
     <div class="item" data-view="expenses"><span class="ic">${NAV_ICONS.expenses}</span>記帳</div>
     <div class="item" data-view="fx"><span class="ic">${NAV_ICONS.fx}</span>匯率</div>
-    <div class="item" data-view="settle"><span class="ic">${NAV_ICONS.settle}</span>結算</div>
     <div class="item" data-view="analysis"><span class="ic">${NAV_ICONS.analysis}</span>分析</div>
-    <div class="item" data-view="members"><span class="ic">${NAV_ICONS.members}</span>成員</div>
+    <div class="item" data-view="settle"><span class="ic">${NAV_ICONS.settle}</span>結算</div>
+    <div class="item" data-view="members"><span class="ic">${NAV_ICONS.members}</span>設定</div>
   </nav>
   <div id="modalRoot"></div>`;
   document.querySelectorAll('nav.bottom .item').forEach(el=>{
