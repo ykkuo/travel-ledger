@@ -273,14 +273,41 @@ let syncing=false;
 function tripRef(){ return db.collection('trips').doc(tripId); }
 
 /* ============ Boot ============ */
+// 手機瀏覽器（尤其 iOS，含 Chrome/Safari/Edge，底層都是同一套引擎）用「跳出視窗」做 Google 登入
+// 常會因為兩個視窗間存取不到同一份暫存資料而失敗（missing initial state 錯誤）。
+// 手機一律改用「整頁跳轉」登入，桌機維持跳出視窗（比較不會打斷操作）。
+function isMobileDevice(){
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+function friendlyAuthErrorMsg(err){
+  if(!err) return '未知錯誤';
+  if(err.message && /missing initial state/i.test(err.message)) return '瀏覽器暫存資料無法讀取（常見於無痕模式）';
+  return err.message || err.code || '未知錯誤';
+}
 function boot(){
   renderShell(`<div class="empty" style="padding-top:80px">連線中…</div>`);
-  auth.onAuthStateChanged(user=>{
+  // 用整頁跳轉(redirect)登入時，回到頁面後 auth.currentUser 的更新跟 onAuthStateChanged
+  // 觸發的時間點可能有先後落差（race condition），若只依賴 onAuthStateChanged 第一次觸發
+  // 就渲染畫面，有機率抓到還沒更新的舊狀態，畫面就會卡在「未登入」。
+  // 這裡改成：不管是 getRedirectResult 處理完、還是 onAuthStateChanged 觸發，
+  // 都直接讀當下最新的 auth.currentUser 來渲染，兩邊都會呼叫，其中較晚完成的那次會是正確結果。
+  function attemptRender(){
+    const user = auth.currentUser;
     if(user){ tryResumeLocal(); }
     else {
       const params = new URLSearchParams(location.search);
       renderHome(params.get('trip'));
     }
+  }
+  auth.getRedirectResult().catch(err=>{
+    if(err && err.code && err.code!=='auth/no-current-user' && err.code!=='auth/null-user'){
+      alert('Google 登入失敗：'+friendlyAuthErrorMsg(err));
+    }
+  }).finally(()=>{
+    attemptRender();
+  });
+  auth.onAuthStateChanged(()=>{
+    attemptRender();
   });
 }
 function ensureAuthed(cb){
@@ -436,13 +463,25 @@ function signInGoogleThenCreate(){
     if(!confirm('偵測到你目前是用 App 內建瀏覽器（例如 Messenger、Instagram、LINE），Google 登入很可能會失敗或出現錯誤畫面。\n\n建議先用右上／右下角選單「用瀏覽器開啟」，改用 Safari 或 Chrome 再試一次。\n\n仍要嘗試登入嗎？')) return;
   }
   const provider = new firebase.auth.GoogleAuthProvider();
+  if(isMobileDevice()){
+    // 手機一律用整頁跳轉登入，避免跳出視窗在手機瀏覽器上常見的暫存資料同步失敗問題。
+    // 跳轉後回到頁面時，boot() 裡的 getRedirectResult 會接手處理登入結果並重新渲染畫面。
+    auth.signInWithRedirect(provider).catch(err=>{
+      if(err.code === 'auth/unauthorized-domain'){
+        alert('這個網址還沒被 Firebase 授權可以用 Google 登入。請到 Authentication → Settings → 授權網域加入目前的網域，且這個檔案需要放到網站上才能用 Google 登入，不能用檔案總管直接雙擊開啟。');
+      } else {
+        alert('登入失敗：'+friendlyAuthErrorMsg(err));
+      }
+    });
+    return;
+  }
   auth.signInWithPopup(provider).then(()=>{ renderHome(); })
     .catch(err=>{
       if(err.code === 'auth/popup-closed-by-user') return;
       if(err.code === 'auth/unauthorized-domain'){
         alert('這個網址還沒被 Firebase 授權可以用 Google 登入。請到 Authentication → Settings → 授權網域加入目前的網域，且這個檔案需要放到網站上（例如 GitHub Pages）才能用 Google 登入，不能用檔案總管直接雙擊開啟。');
       } else {
-        alert('登入失敗：'+err.message);
+        alert('登入失敗：'+friendlyAuthErrorMsg(err));
       }
     });
 }
@@ -629,7 +668,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3e1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3e3 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
