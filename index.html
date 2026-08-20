@@ -330,6 +330,33 @@ function renderHome(prefillCode){
 
 function esc(str){ return String(str||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
 
+/* ============ App 內建瀏覽器（in-app browser）偵測 ============
+   Messenger／Instagram／LINE／TikTok 等 App 內建瀏覽器常會限制或隔離 sessionStorage，
+   導致 Google 登入（signInWithPopup）失敗並出現「missing initial state」錯誤。
+   偵測到這類環境時提醒使用者改用系統瀏覽器開啟，避免卡在看不懂的英文錯誤畫面。 */
+function isInAppBrowser(){
+  const ua = navigator.userAgent || navigator.vendor || window.opera || '';
+  return /FBAN|FBAV|Messenger|Instagram|Line\/|MicroMessenger|TikTok|musical_ly|Snapchat/i.test(ua);
+}
+function inAppBrowserBannerHtml(){
+  if(!isInAppBrowser()) return '';
+  return `
+  <div class="banner" style="margin-bottom:16px">
+    ⚠️ 偵測到你目前是用 App 內建的瀏覽器開啟（例如 Messenger、Instagram、LINE），部分功能（特別是 Google 登入）可能無法正常運作，甚至出現錯誤畫面。
+    <div class="hint" style="margin:6px 0 0">建議點畫面右上角或右下角的「⋯」選單，選擇「用瀏覽器開啟」或「在 Safari／Chrome 中開啟」。</div>
+    <div class="footer-actions" style="margin-top:10px">
+      <button class="btn ghost sm" onclick="copyCurrentUrl()">📋 複製這個連結</button>
+    </div>
+  </div>`;
+}
+function copyCurrentUrl(){
+  const ta = document.createElement('textarea');
+  ta.value = location.href; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); toast('已複製連結，請貼到瀏覽器打開'); }
+  catch(e){ navigator.clipboard?.writeText(location.href); toast('已複製連結'); }
+  ta.remove();
+}
+
 function renderHomeInner(prefillCode, isGoogle, myTrips){
   const tripListHtml = (isGoogle && myTrips.length) ? `
     <label>你名下的旅程</label>
@@ -362,6 +389,7 @@ function renderHomeInner(prefillCode, isGoogle, myTrips){
       <div class="home-title">📒 旅費帳本</div>
       <div class="home-sub">家庭旅遊記帳與分帳，可多人共編</div>
 
+      ${inAppBrowserBannerHtml()}
       ${tripListHtml}
       ${createBlock}
 
@@ -404,6 +432,9 @@ function renameTripPrompt(id, currentName){
 }
 
 function signInGoogleThenCreate(){
+  if(isInAppBrowser()){
+    if(!confirm('偵測到你目前是用 App 內建瀏覽器（例如 Messenger、Instagram、LINE），Google 登入很可能會失敗或出現錯誤畫面。\n\n建議先用右上／右下角選單「用瀏覽器開啟」，改用 Safari 或 Chrome 再試一次。\n\n仍要嘗試登入嗎？')) return;
+  }
   const provider = new firebase.auth.GoogleAuthProvider();
   auth.signInWithPopup(provider).then(()=>{ renderHome(); })
     .catch(err=>{
@@ -598,7 +629,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3d1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3e1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
