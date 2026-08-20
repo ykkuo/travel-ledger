@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>旅費帳本</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a2b2c">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="旅費帳本">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;700&family=Roboto+Mono:wght@500;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
@@ -168,6 +175,56 @@ function toast(msg){
   t.className='toast'; t.textContent=msg;
   document.body.appendChild(t);
   setTimeout(()=>t.remove(), 1800);
+}
+
+/* ============ PWA 安裝為桌面／主畫面 App ============ */
+let deferredInstallPrompt = null;
+function isStandaloneDisplay(){
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if(currentView==='members') render();
+});
+window.addEventListener('appinstalled', ()=>{
+  deferredInstallPrompt = null;
+  toast('已安裝到裝置');
+  if(currentView==='members') render();
+});
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('/sw.js').catch(()=>{});
+  });
+}
+function installApp(){
+  if(deferredInstallPrompt){
+    deferredInstallPrompt.prompt();
+    deferredInstallPrompt.userChoice.finally(()=>{ deferredInstallPrompt=null; if(currentView==='members') render(); });
+    return;
+  }
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
+  if(isIOS){
+    alert('在 iPhone / iPad 上安裝：\n\n1. 用 Safari 打開這個網頁\n2. 點下方工具列的「分享」圖示\n3. 選擇「加入主畫面」');
+  } else {
+    alert('這個瀏覽器目前偵測不到可直接安裝的功能。\n\n通常可以在瀏覽器網址列右側找到「安裝」圖示，或從瀏覽器選單選擇「安裝應用程式／加到主畫面」。');
+  }
+}
+function installCardHtml(){
+  if(isStandaloneDisplay()){
+    return `
+    <div class="card">
+      <h2>安裝應用程式</h2>
+      <div class="hint">目前已經是用「App 模式」開啟旅費帳本 🎉</div>
+    </div>`;
+  }
+  return `
+  <div class="card">
+    <h2>安裝應用程式</h2>
+    <div class="hint" style="margin-bottom:10px">安裝到桌面或手機主畫面後，可以像一般 App 一樣直接點圖示開啟，畫面也會更完整（沒有瀏覽器網址列）。</div>
+    <button class="btn brass block" onclick="installApp()">📲 安裝為桌面／主畫面 App</button>
+  </div>`;
 }
 
 /* ============ Currency rates (1 單位外幣 = ? 台幣) ============ */
@@ -517,7 +574,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3b1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3c1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -570,6 +627,7 @@ function renderMembers(){
       <button class="btn brass" onclick="addMember()">新增</button>
     </div>
   </div>
+  ${installCardHtml()}
   <div class="card">
     <h2>旅程資訊</h2>
     <div class="row">
