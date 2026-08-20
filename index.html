@@ -286,28 +286,20 @@ function friendlyAuthErrorMsg(err){
 }
 function boot(){
   renderShell(`<div class="empty" style="padding-top:80px">連線中…</div>`);
-  // 用整頁跳轉(redirect)登入時，回到頁面後 auth.currentUser 的更新跟 onAuthStateChanged
-  // 觸發的時間點可能有先後落差（race condition），若只依賴 onAuthStateChanged 第一次觸發
-  // 就渲染畫面，有機率抓到還沒更新的舊狀態，畫面就會卡在「未登入」。
-  // 這裡改成：不管是 getRedirectResult 處理完、還是 onAuthStateChanged 觸發，
-  // 都直接讀當下最新的 auth.currentUser 來渲染，兩邊都會呼叫，其中較晚完成的那次會是正確結果。
-  function attemptRender(){
-    const user = auth.currentUser;
+  // 簡化流程：只讓 onAuthStateChanged 負責觸發畫面渲染（使用者登入完成後一定會觸發一次）。
+  // getRedirectResult() 只用來攔截「整頁跳轉登入」流程中可能發生的錯誤並直接顯示錯誤代碼，
+  // 不再額外呼叫渲染，避免兩個非同步流程互相搶跑造成畫面重複刷新。
+  auth.getRedirectResult().catch(err=>{
+    if(err && err.code && err.code!=='auth/no-current-user' && err.code!=='auth/null-user'){
+      alert('Google 登入失敗（錯誤代碼：'+err.code+'）\n'+friendlyAuthErrorMsg(err)+'\n\n請把這個訊息截圖回報，方便進一步排查。');
+    }
+  });
+  auth.onAuthStateChanged(user=>{
     if(user){ tryResumeLocal(); }
     else {
       const params = new URLSearchParams(location.search);
       renderHome(params.get('trip'));
     }
-  }
-  auth.getRedirectResult().catch(err=>{
-    if(err && err.code && err.code!=='auth/no-current-user' && err.code!=='auth/null-user'){
-      alert('Google 登入失敗：'+friendlyAuthErrorMsg(err));
-    }
-  }).finally(()=>{
-    attemptRender();
-  });
-  auth.onAuthStateChanged(()=>{
-    attemptRender();
   });
 }
 function ensureAuthed(cb){
@@ -668,7 +660,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3e3 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3e5 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
