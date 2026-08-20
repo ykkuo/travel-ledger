@@ -131,7 +131,7 @@
 /* ============ Firebase config — 把 Firebase 主控台複製到的設定值貼在這裡 ============ */
 const firebaseConfig = {
   apiKey: "AIzaSyB73e7IEvBWWtUW3UkK9kjHSj3cqWddQio",
-  authDomain: "travel-ledger-9b67f.firebaseapp.com",
+  authDomain: "un-buen-viaje.web.app",
   projectId: "travel-ledger-9b67f",
   storageBucket: "travel-ledger-9b67f.firebasestorage.app",
   messagingSenderId: "791649656590",
@@ -660,7 +660,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3e5 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3e6 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
