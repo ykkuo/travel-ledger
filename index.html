@@ -232,19 +232,32 @@ function getRate(cur){
   const r = (currencyRates||{})[cur];
   return (typeof r==='number' && r>0) ? r : null;
 }
-// 現金支出的即時台幣金額：有匯率就用「目前」匯率換算（跟著匯率頁更新），沒有就退回存檔當下的金額
+// 現金支出的即時台幣金額：有匯率就用「目前」匯率換算（跟著匯率頁更新），沒有就退回存檔當下的金額。
+// 信用卡外幣支出若尚未填入台幣金額（帳單還沒來），也先套用已設定的匯率回推估算金額，
+// 避免分析／結算頁在帳單確認前把這筆支出當成 0 元計算；一旦填了台幣金額（帳單實際金額），
+// 則一律以該金額為準，不再用匯率覆蓋。
 function liveTwdAmount(e){
-  if(e.paymethod==='cash' && e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
-    const rate = getRate(e.currency);
-    if(rate!=null) return (e.foreignAmount||0) * rate;
+  if(e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
+    if(e.paymethod==='cash'){
+      const rate = getRate(e.currency);
+      if(rate!=null) return (e.foreignAmount||0) * rate;
+    } else if(e.paymethod==='card' && !e.twdAmount && e.foreignAmount){
+      const rate = getRate(e.currency);
+      if(rate!=null) return e.foreignAmount * rate;
+    }
   }
   return e.twdAmount||0;
 }
-// 對應到單一受益人的即時台幣分攤金額
+// 對應到單一受益人的即時台幣分攤金額（現金與尚未確認金額的信用卡外幣支出都適用）
 function liveBenefTwd(e, b){
-  if(e.paymethod==='cash' && e.currency && e.currency!=='TWD' && e.currency!=='外幣'){
-    const rate = getRate(e.currency);
-    if(rate!=null && b.foreignAmount!=null) return b.foreignAmount * rate;
+  if(e.currency && e.currency!=='TWD' && e.currency!=='外幣' && b.foreignAmount!=null){
+    if(e.paymethod==='cash'){
+      const rate = getRate(e.currency);
+      if(rate!=null) return b.foreignAmount * rate;
+    } else if(e.paymethod==='card' && !e.twdAmount){
+      const rate = getRate(e.currency);
+      if(rate!=null) return b.foreignAmount * rate;
+    }
   }
   return b.amount||0;
 }
@@ -660,7 +673,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${tripName || ''}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3e6 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3f1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -1064,6 +1077,7 @@ function renderExpenseModal(d, isEdit){
         <input type="number" id="fForeignCard" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 5000">
         <label>台幣金額（信用卡帳單金額，可先留空之後再補）</label>
         <input type="number" id="fTwdCard" value="${d.twdAmount||''}" placeholder="選填，帳單來之前可先留空或估算">
+        <div id="cardRateHint" class="hint"></div>
         <div class="row" style="margin-top:8px">
           <label style="margin:0"><input type="checkbox" id="fConfirmed" ${d.status==='confirmed'?'checked':''}> 已對照信用卡帳單（確認金額）</label>
         </div>
@@ -1103,12 +1117,13 @@ function renderExpenseModal(d, isEdit){
   ['fCurrencyCash','fForeignCash','fCurrency','fForeignCard','fTwdCard'].forEach(id=>{
     const el = document.getElementById(id);
     if(el){
-      el.addEventListener('input', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
-      el.addEventListener('change', ()=>{ refreshBenefSection(); refreshCashRateHint(); });
+      el.addEventListener('input', ()=>{ refreshBenefSection(); refreshCashRateHint(); refreshCardRateHint(); });
+      el.addEventListener('change', ()=>{ refreshBenefSection(); refreshCashRateHint(); refreshCardRateHint(); });
     }
   });
   bindBenefCheckboxHandlers();
   refreshCashRateHint();
+  refreshCardRateHint();
 }
 
 function refreshCashRateHint(){
@@ -1122,6 +1137,25 @@ function refreshCashRateHint(){
   hintEl.textContent = rate!=null
     ? `目前匯率：1 ${cur} = ${fmt(rate)} 台幣`
     : `「${cur}」尚未設定匯率，請到「匯率」頁新增，設定後這筆支出會自動換算。`;
+}
+
+// 信用卡外幣支出：台幣金額（帳單金額）留空時，先用已設定的匯率提示估算值，
+// 讓使用者知道分析／結算頁在帳單確認前會顯示什麼數字。填了台幣金額後就不再提示估算，因為會直接採用該金額。
+function refreshCardRateHint(){
+  const hintEl = document.getElementById('cardRateHint');
+  if(!hintEl) return;
+  const twdCardEl = document.getElementById('fTwdCard');
+  const currencyEl = document.getElementById('fCurrency');
+  const foreignEl = document.getElementById('fForeignCard');
+  if(!twdCardEl || !currencyEl || !foreignEl){ hintEl.textContent=''; return; }
+  if(twdCardEl.value){ hintEl.textContent=''; return; }
+  const cur = currencyEl.value.trim().toUpperCase();
+  const foreignAmount = parseFloat(foreignEl.value) || 0;
+  if(!cur || !foreignAmount){ hintEl.textContent=''; return; }
+  const rate = getRate(cur);
+  hintEl.textContent = rate!=null
+    ? `尚未填台幣金額，分析／結算頁會先套用已設定匯率（1 ${cur} = ${fmt(rate)} 台幣）估算為 NT$${fmt(foreignAmount*rate)}，待對照帳單後可回來更新。`
+    : `「${cur}」尚未設定匯率，帳單確認前分析／結算頁會先顯示為 NT$0，可到「匯率」頁新增匯率以先看到估算值。`;
 }
 
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
@@ -1421,6 +1455,10 @@ function renderSettle(){
 /* ---- Mode A：所有支出折合台幣，統一結算一次 ---- */
 function renderSettleTWD(){
   const estCount = expenses.filter(e=>liveStatus(e)==='estimated').length;
+  const fxAppliedCount = expenses.filter(e=>
+    e.paymethod==='card' && !e.twdAmount && e.foreignAmount &&
+    e.currency && e.currency!=='TWD' && e.currency!=='外幣' && getRate(e.currency)!=null
+  ).length;
   const paid = {}, owed = {};
   members.forEach(m=>{ paid[m.id]=0; owed[m.id]=0; });
   expenses.forEach(e=>{
@@ -1453,7 +1491,7 @@ function renderSettleTWD(){
   const summaryText = buildSummaryTextTWD(net, transfers);
 
   return `
-  ${estCount>0? `<div class="banner">⚠️ 還有 ${estCount} 筆支出是「估算」狀態（信用卡尚未對帳單，或現金幣別尚未設定匯率），結算金額可能會再變動。</div>` : ''}
+  ${estCount>0? `<div class="banner">⚠️ 還有 ${estCount} 筆支出是「估算」狀態（信用卡尚未對帳單，或現金幣別尚未設定匯率），結算金額可能會再變動${fxAppliedCount>0? `（其中 ${fxAppliedCount} 筆信用卡支出已先套用已設定的匯率估算台幣金額）`:''}。</div>` : ''}
   <div class="card">
     <h2>每人淨額（全部折合台幣）</h2>
     ${rows}
