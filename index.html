@@ -57,6 +57,12 @@
   input[type=text],input[type=number],input[type=date],select,textarea{width:100%; padding:10px 11px; border-radius:9px; border:1px solid var(--line); background:#fff; font-size:14px; font-family:inherit; color:var(--ink);}
   input:focus,select:focus{outline:2px solid var(--brass); outline-offset:1px;}
   .catgrid{display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:4px;}
+  .chiprow{display:flex; flex-wrap:wrap; gap:8px; margin-top:4px;}
+  .chip{border:1px solid var(--line); background:#fff; border-radius:20px; padding:7px 14px; font-size:13px; cursor:pointer; color:var(--ink); user-select:none;}
+  .chip.sel{background:var(--teal); color:var(--paper); border-color:var(--teal); font-weight:500;}
+  .filterbar{display:flex; align-items:center; gap:8px; margin-bottom:12px;}
+  .filterbtn{position:relative;}
+  .filterbadge{position:absolute; top:-6px; right:-6px; background:var(--brass); color:var(--teal-deep); font-size:10px; font-weight:700; border-radius:50%; width:17px; height:17px; display:flex; align-items:center; justify-content:center;}
   .catbtn{border:1px solid var(--line); background:#fff; border-radius:10px; padding:10px 4px; text-align:center; font-size:12px; cursor:pointer; color:var(--ink);}
   .catbtn.sel{background:var(--teal); color:var(--paper); border-color:var(--teal);}
   .catbtn .ic{font-size:18px; display:block; margin-bottom:3px;}
@@ -275,6 +281,8 @@ let members=[], expenses=[], subcats=[], currencies=[], currencyRates={};
 let unsubs=[];
 let currentView='expenses';
 let settleMode='twd'; // 'twd' = 折合台幣結算, 'currency' = 依幣別分開結算
+// 記帳頁篩選條件；各陣列為空代表「不篩選該維度（全部顯示）」。存在記憶體中，重新整理頁面會重置，不寫回 Firestore。
+let expenseFilters = { text:'', cats:[], payerIds:[], currencies:[], statuses:['estimated','confirmed'], dateFrom:'', dateTo:'' };
 let pendingIsCreator=false;
 let isOnline = navigator.onLine;
 let pendingWrites = {members:false, expenses:false};
@@ -686,7 +694,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${escHtml(tripName || '')}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3f2 · ${myMemberName? '你是 '+escHtml(myMemberName) : ''}</div>
+    <div class="ver">v3g1 · ${myMemberName? '你是 '+escHtml(myMemberName) : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -897,14 +905,58 @@ function addNewRate(){
 }
 
 /* ============ Expenses list ============ */
+function activeFilterCount(){
+  let n = 0;
+  if(expenseFilters.text.trim()) n++;
+  if(expenseFilters.cats.length>0) n++;
+  if(expenseFilters.payerIds.length>0) n++;
+  if(expenseFilters.currencies.length>0) n++;
+  if(expenseFilters.statuses.length>0 && expenseFilters.statuses.length<2) n++;
+  if(expenseFilters.dateFrom) n++;
+  if(expenseFilters.dateTo) n++;
+  return n;
+}
+function matchesExpenseFilter(e){
+  const f = expenseFilters;
+  if(f.text.trim()){
+    const q = f.text.trim().toLowerCase();
+    const hay = ((e.title||'')+' '+(e.subCat||'')).toLowerCase();
+    if(!hay.includes(q)) return false;
+  }
+  if(f.cats.length>0 && !f.cats.includes(e.mainCat)) return false;
+  if(f.payerIds.length>0 && !f.payerIds.includes(e.payerId)) return false;
+  if(f.currencies.length>0 && !f.currencies.includes(e.currency)) return false;
+  if(f.statuses.length>0 && !f.statuses.includes(liveStatus(e))) return false;
+  if(f.dateFrom && e.date < f.dateFrom) return false;
+  if(f.dateTo && e.date > f.dateTo) return false;
+  return true;
+}
+function availableFilterCurrencies(){
+  const set = new Set(['TWD']);
+  (currencies||[]).forEach(c=> set.add(c));
+  expenses.forEach(e=>{ if(e.currency) set.add(e.currency); });
+  return Array.from(set).sort((a,b)=> a==='TWD'? -1 : b==='TWD'? 1 : a.localeCompare(b));
+}
 function renderExpenses(){
   if(expenses.length===0){
     return `<div class="empty"><div class="big">🧳</div>還沒有任何記帳紀錄<br>點右下角「＋」開始記第一筆</div>`;
   }
-  const sorted = [...expenses].sort((a,b)=> b.date.localeCompare(a.date) || 0);
+  const fCount = activeFilterCount();
+  const filterBar = `
+  <div class="filterbar">
+    <button class="btn ghost sm filterbtn" onclick="openFilterModal()">🔍 篩選${fCount>0? `<span class="filterbadge">${fCount}</span>`:''}</button>
+    ${fCount>0? `<button class="btn ghost sm" onclick="clearExpenseFilters()">清除篩選</button>`:''}
+  </div>`;
+
+  const filtered = expenses.filter(matchesExpenseFilter);
+  if(filtered.length===0){
+    return `${filterBar}<div class="empty"><div class="big">🔍</div>沒有符合篩選條件的支出<br><span style="font-size:12px">試試調整或清除篩選條件</span></div>`;
+  }
+
+  const sorted = [...filtered].sort((a,b)=> b.date.localeCompare(a.date) || 0);
   const byDate = {};
   sorted.forEach(e=>{ (byDate[e.date] = byDate[e.date]||[]).push(e); });
-  let html = `<button class="btn ghost on-dark block" style="margin-bottom:12px" onclick="exportExpensesCSV()">📤 匯出支出明細 CSV</button>`;
+  let html = filterBar + `<button class="btn ghost on-dark block" style="margin-bottom:12px" onclick="exportExpensesCSV()">📤 匯出${fCount>0? '篩選後':''}支出明細 CSV</button>`;
   Object.keys(byDate).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
     html += `<div class="datehead">${date}</div><div class="card" style="padding:4px 16px;">`;
     byDate[date].forEach(e=>{
@@ -925,6 +977,89 @@ function renderExpenses(){
     html += `</div>`;
   });
   return html;
+}
+
+/* ============ Expense filter modal ============ */
+function openFilterModal(){
+  const f = expenseFilters;
+  const catChips = CATS.map(c=>`
+    <div class="chip ${f.cats.includes(c.id)?'sel':''}" data-fcat="${c.id}">${c.ic} ${c.label}</div>`).join('');
+  const payerChips = members.map(m=>`
+    <div class="chip ${f.payerIds.includes(m.id)?'sel':''}" data-fpayer="${m.id}">${escHtml(m.name)}</div>`).join('') || `<div class="hint">尚無成員</div>`;
+  const currencyChips = availableFilterCurrencies().map(c=>`
+    <div class="chip ${f.currencies.includes(c)?'sel':''}" data-fcur="${escHtml(c)}">${escHtml(c)}</div>`).join('');
+  const statusChips = `
+    <div class="chip ${f.statuses.includes('estimated')?'sel':''}" data-fstatus="estimated">估算</div>
+    <div class="chip ${f.statuses.includes('confirmed')?'sel':''}" data-fstatus="confirmed">已確認</div>`;
+
+  const html = `
+  <div class="modal-bg" id="filterModalBg">
+    <div class="modal modal-wrap">
+      <button class="close" onclick="closeModal()">✕</button>
+      <h2>篩選支出</h2>
+
+      <label>文字搜尋（標題／次分類）</label>
+      <input type="text" id="fFilterText" value="${escHtml(f.text)}" placeholder="例如：晚餐、伴手禮">
+
+      <label>主分類</label>
+      <div class="chiprow" id="filterCatChips">${catChips}</div>
+
+      <label>付款人</label>
+      <div class="chiprow" id="filterPayerChips">${payerChips}</div>
+
+      <label>幣別</label>
+      <div class="chiprow" id="filterCurChips">${currencyChips}</div>
+
+      <label>確認狀態</label>
+      <div class="chiprow" id="filterStatusChips">${statusChips}</div>
+
+      <label>日期區間</label>
+      <div class="row" style="gap:8px">
+        <input type="date" id="fFilterDateFrom" value="${f.dateFrom}">
+        <input type="date" id="fFilterDateTo" value="${f.dateTo}">
+      </div>
+
+      <div class="footer-actions">
+        <button class="btn danger" onclick="clearExpenseFilters()">清除篩選</button>
+        <button class="btn brass block" onclick="applyExpenseFilters()">套用篩選</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modalRoot').innerHTML = html;
+
+  document.querySelectorAll('#filterCatChips .chip').forEach(el=>{
+    el.onclick = ()=> el.classList.toggle('sel');
+  });
+  document.querySelectorAll('#filterPayerChips .chip').forEach(el=>{
+    el.onclick = ()=> el.classList.toggle('sel');
+  });
+  document.querySelectorAll('#filterCurChips .chip').forEach(el=>{
+    el.onclick = ()=> el.classList.toggle('sel');
+  });
+  document.querySelectorAll('#filterStatusChips .chip').forEach(el=>{
+    el.onclick = ()=> el.classList.toggle('sel');
+  });
+}
+function applyExpenseFilters(){
+  const selChips = (sel)=> Array.from(document.querySelectorAll(sel+' .chip.sel'));
+  expenseFilters = {
+    text: document.getElementById('fFilterText').value,
+    cats: selChips('#filterCatChips').map(el=>el.dataset.fcat),
+    payerIds: selChips('#filterPayerChips').map(el=>el.dataset.fpayer),
+    currencies: selChips('#filterCurChips').map(el=>el.dataset.fcur),
+    statuses: selChips('#filterStatusChips').map(el=>el.dataset.fstatus),
+    dateFrom: document.getElementById('fFilterDateFrom').value,
+    dateTo: document.getElementById('fFilterDateTo').value,
+  };
+  // 確認狀態沒有勾選任何一個時視同「不篩選」，避免整頁被篩到全空
+  if(expenseFilters.statuses.length===0) expenseFilters.statuses = ['estimated','confirmed'];
+  closeModal();
+  render();
+}
+function clearExpenseFilters(){
+  expenseFilters = { text:'', cats:[], payerIds:[], currencies:[], statuses:['estimated','confirmed'], dateFrom:'', dateTo:'' };
+  closeModal();
+  render();
 }
 
 /* ============ Expense modal ============ */
@@ -1279,10 +1414,11 @@ function csvEscape(val){
   return s;
 }
 function exportExpensesCSV(){
-  if(expenses.length===0){ alert('尚無支出資料可匯出'); return; }
+  const toExport = expenses.filter(matchesExpenseFilter);
+  if(toExport.length===0){ alert('目前篩選條件下沒有支出資料可匯出'); return; }
   const headers = ['日期','標題','主分類','次分類','付款方式','幣別','支出外幣金額','支出台幣金額','對帳狀態','付款人','受益人','受益人分攤金額(台幣)','受益人分攤金額(原幣別)'];
   const rows = [headers];
-  const sorted = [...expenses].sort((a,b)=> a.date.localeCompare(b.date));
+  const sorted = [...toExport].sort((a,b)=> a.date.localeCompare(b.date));
   sorted.forEach(e=>{
     const payer = memberName(e.payerId);
     const totalTwd = Math.round((liveTwdAmount(e)+Number.EPSILON)*10)/10;
@@ -1313,7 +1449,7 @@ function exportExpensesCSV(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${tripName||'旅費帳本'}_支出明細_${todayStr()}.csv`;
+  a.download = `${tripName||'旅費帳本'}_支出明細${activeFilterCount()>0? '(已篩選)':''}_${todayStr()}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();
