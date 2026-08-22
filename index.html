@@ -694,7 +694,7 @@ function renderShell(mainHtml, isHome){
       ${tripIcon} ${escHtml(tripName || '')}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3g1 · ${myMemberName? '你是 '+escHtml(myMemberName) : ''}</div>
+    <div class="ver">v3g2 · ${myMemberName? '你是 '+escHtml(myMemberName) : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -944,8 +944,8 @@ function renderExpenses(){
   const fCount = activeFilterCount();
   const filterBar = `
   <div class="filterbar">
-    <button class="btn ghost sm filterbtn" onclick="openFilterModal()">🔍 篩選${fCount>0? `<span class="filterbadge">${fCount}</span>`:''}</button>
-    ${fCount>0? `<button class="btn ghost sm" onclick="clearExpenseFilters()">清除篩選</button>`:''}
+    <button class="btn ghost on-dark sm filterbtn" onclick="openFilterModal()">🔍 篩選${fCount>0? `<span class="filterbadge">${fCount}</span>`:''}</button>
+    ${fCount>0? `<button class="btn ghost on-dark sm" onclick="clearExpenseFilters()">清除篩選</button>`:''}
   </div>`;
 
   const filtered = expenses.filter(matchesExpenseFilter);
