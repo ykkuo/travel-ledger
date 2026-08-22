@@ -360,7 +360,20 @@ function renderHome(prefillCode){
   }
 }
 
+// esc(): 用於 onclick="fn('${...}')" 這類「雙引號屬性裡包一段單引號 JS 字串」的場合 —
+// 只需處理反斜線／單引號／雙引號，讓瀏覽器解析屬性、還原成 JS 字串時不會被使用者輸入的內容跳脫出去。
 function esc(str){ return String(str||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+// escHtml(): 用於把使用者輸入（姓名、標題、次分類、旅程名稱等）當成「畫面上顯示的文字內容」
+// 或「一般屬性值（如 value="..."）」插入 innerHTML 時使用，避免使用者輸入的 <script> 等標籤被瀏覽器當成真的 HTML 執行
+// （多人共編情境下，任何協作者的輸入都必須視為不可信任內容）。
+function escHtml(str){
+  return String(str==null?'':str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
+}
 
 /* ============ App 內建瀏覽器（in-app browser）偵測 ============
    Messenger／Instagram／LINE／TikTok 等 App 內建瀏覽器常會限制或隔離 sessionStorage，
@@ -397,7 +410,7 @@ function renderHomeInner(prefillCode, isGoogle, myTrips){
         <div onclick="switchToMyTrip('${t.id}')" style="flex:1;display:flex;align-items:center;gap:10px;cursor:pointer;min-width:0">
           <div class="avatar" style="width:26px;height:26px;font-size:13px">${t.icon||'📒'}</div>
           <div style="min-width:0">
-            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.name}</div>
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(t.name)}</div>
             <div class="hint">邀請碼 ${t.id}</div>
           </div>
         </div>
@@ -534,20 +547,20 @@ function renderNamePicker(isCreator){
 
     const chips = existing.map(m=>{
       const claimedByOther = !!(m.claimedUid && auth.currentUser && m.claimedUid!==auth.currentUser.uid);
-      const nameEsc = m.name.replace(/'/g,"\\'");
+      const nameEsc = esc(m.name);
       const clickFn = claimedByOther
         ? `confirmClaimOther('${m.id}','${nameEsc}')`
         : `pickMember('${m.id}','${nameEsc}')`;
       return `
       <div class="namechip ${claimedByOther?'claimedother':''}" onclick="${clickFn}">
-        <div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}
+        <div class="avatar" style="width:26px;height:26px;font-size:11px">${escHtml(initials(m.name))}</div>${escHtml(m.name)}
         ${claimedByOther? ' <span class="hint">（可能已有人在用，點擊需確認）</span>':''}
       </div>`;
     }).join('');
     const html = `
     <div class="home-wrap">
       <div class="home-card">
-        <div class="home-title">${tripName}</div>
+        <div class="home-title">${escHtml(tripName)}</div>
         <div class="home-sub">${isCreator? '旅程已建立，先選你自己的名字' : '你是這趟旅程的哪一位？'}</div>
         ${chips}
         <div class="divider">${existing.length? '或新增':''}</div>
@@ -670,10 +683,10 @@ function renderShell(mainHtml, isHome){
   <header class="app">
     <h1>旅費帳本</h1>
     <div class="sub">
-      ${tripIcon} ${tripName || ''}
+      ${tripIcon} ${escHtml(tripName || '')}
       <span class="codepill" onclick="copyInviteCode()">邀請碼 ${tripId}</span>
     </div>
-    <div class="ver">v3f1 · ${myMemberName? '你是 '+myMemberName : ''}</div>
+    <div class="ver">v3f2 · ${myMemberName? '你是 '+escHtml(myMemberName) : ''}</div>
     ${!isOnline
       ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">📴 離線中，變更會先存在這台裝置，恢復連線後自動同步</div>`
       : (hasPending() ? `<div class="synctag" style="color:var(--brass-light);margin-top:4px">🔄 同步中…</div>` : '')
@@ -713,8 +726,8 @@ function render(){
 function renderMembers(){
   const rows = members.map(m=>`
     <div class="memberrow">
-      <div class="avatar">${initials(m.name)}</div>
-      <div style="flex:1">${m.name}${m.id===myMemberId? ' <span class=\"hint\">（你）</span>':''}</div>
+      <div class="avatar">${escHtml(initials(m.name))}</div>
+      <div style="flex:1">${escHtml(m.name)}${m.id===myMemberId? ' <span class=\"hint\">（你）</span>':''}</div>
       <button class="btn ghost sm" onclick="removeMember('${m.id}')">刪除</button>
     </div>`).join('') || `<div class="hint">尚未新增成員</div>`;
   return `
@@ -739,7 +752,7 @@ function renderMembers(){
     <div class="row" style="margin-top:8px">
       <div>旅程名稱</div>
       <div style="display:flex;align-items:center;gap:6px;text-align:right">
-        ${tripName}
+        ${escHtml(tripName)}
         ${isOwner()? `<button class="btn ghost sm" onclick="renameTripPrompt('${tripId}','${esc(tripName)}')">✎</button>`:''}
       </div>
     </div>
@@ -835,16 +848,16 @@ function renderRates(){
     return `
     <div class="card" style="margin-bottom:10px;">
       <div class="row">
-        <div style="font-weight:700">${c}</div>
+        <div style="font-weight:700">${escHtml(c)}</div>
         <div style="text-align:right;flex:1;display:flex;align-items:center;justify-content:flex-end;gap:8px">
-          <span class="hint" style="margin:0">1 ${c} =</span>
-          <input type="number" id="rateInput_${c}" value="${rate!=null? rate:''}" placeholder="尚未設定" style="width:100px;text-align:right">
+          <span class="hint" style="margin:0">1 ${escHtml(c)} =</span>
+          <input type="number" id="rateInput_${escHtml(c)}" value="${rate!=null? rate:''}" placeholder="尚未設定" style="width:100px;text-align:right">
           <span class="hint" style="margin:0">台幣</span>
         </div>
       </div>
       <div class="footer-actions">
-        <button class="btn ghost sm" onclick="saveRate('${c}')">儲存</button>
-        ${rate!=null? `<button class="btn danger sm" onclick="removeRate('${c}')">刪除匯率</button>`:''}
+        <button class="btn ghost sm" onclick="saveRate('${esc(c)}')">儲存</button>
+        ${rate!=null? `<button class="btn danger sm" onclick="removeRate('${esc(c)}')">刪除匯率</button>`:''}
       </div>
     </div>`;
   }).join('') || `<div class="hint" style="padding:8px 0 14px">尚未有任何幣別，新增一筆現金或信用卡外幣支出後，幣別會自動出現在這裡，也可以直接在下面新增。</div>`;
@@ -900,8 +913,8 @@ function renderExpenses(){
       <div class="expitem" onclick="openExpenseModal('${e.id}')">
         <div class="ic">${catIcon(e.mainCat)}</div>
         <div class="mid">
-          <div class="t1"><span class="dot ${liveStatus(e)==='confirmed'?'conf':'est'}"></span>${e.title? e.title : catLabel(e.mainCat)}</div>
-          <div class="t2">${catLabel(e.mainCat)}${e.subCat? ' · '+e.subCat:''} · ${payer} 付款${e.paymethod==='cash'?' · 現金':' · 刷卡'}</div>
+          <div class="t1"><span class="dot ${liveStatus(e)==='confirmed'?'conf':'est'}"></span>${e.title? escHtml(e.title) : catLabel(e.mainCat)}</div>
+          <div class="t2">${catLabel(e.mainCat)}${e.subCat? ' · '+escHtml(e.subCat):''} · ${escHtml(payer)} 付款${e.paymethod==='cash'?' · 現金':' · 刷卡'}</div>
         </div>
         <div class="amt">
           <div class="twd mono">NT$${fmt(liveTwdAmount(e))}</div>
@@ -988,7 +1001,7 @@ function benefRowsHtml(beneficiaries, fx){
     return `
     <div class="benefrow">
       <input type="checkbox" data-benef="${m.id}" ${checked?'checked':''}>
-      <div class="nm">${m.name}</div>
+      <div class="nm">${escHtml(m.name)}</div>
       <input type="number" data-benefamt="${m.id}" placeholder="均分" value="${val}" ${checked?'':'disabled'}>
     </div>`;
   }).join('');
@@ -1020,7 +1033,7 @@ function bindBenefCheckboxHandlers(){
 }
 
 function renderExpenseModal(d, isEdit){
-  const subcatOptions = (subcats||[]).map(s=>`<option value="${s}">`).join('');
+  const subcatOptions = (subcats||[]).map(s=>`<option value="${escHtml(s)}">`).join('');
   const catBtns = CATS.map(c=>`
     <div class="catbtn ${d.mainCat===c.id?'sel':''}" data-cat="${c.id}">
       <span class="ic">${c.ic}</span>${c.label}
@@ -1030,7 +1043,7 @@ function renderExpenseModal(d, isEdit){
       <button type="button" class="${d.paymethod==='cash'?'sel':''}" data-pm="cash">現金</button>
       <button type="button" class="${d.paymethod==='card'?'sel':''}" data-pm="card">信用卡</button>
     </div>`;
-  const payerOptions = members.map(m=>`<option value="${m.id}" ${d.payerId===m.id?'selected':''}>${m.name}</option>`).join('');
+  const payerOptions = members.map(m=>`<option value="${m.id}" ${d.payerId===m.id?'selected':''}>${escHtml(m.name)}</option>`).join('');
   const initialFx = computeFxContextFromDraft(d);
   const benefRows = benefRowsHtml(d.beneficiaries, initialFx);
 
@@ -1044,13 +1057,13 @@ function renderExpenseModal(d, isEdit){
       <input type="date" id="fDate" value="${d.date}">
 
       <label>標題</label>
-      <input type="text" id="fTitle" value="${d.title||''}" placeholder="例如：築地市場晚餐">
+      <input type="text" id="fTitle" value="${escHtml(d.title||'')}" placeholder="例如：築地市場晚餐">
 
       <label>主分類</label>
       <div class="catgrid" id="catGrid">${catBtns}</div>
 
       <label>次分類（選填，方便日後查找）</label>
-      <input type="text" id="fSubcat" list="subcatList" value="${d.subCat||''}" placeholder="例如：伴手禮、租車、保險">
+      <input type="text" id="fSubcat" list="subcatList" value="${escHtml(d.subCat||'')}" placeholder="例如：伴手禮、租車、保險">
       <datalist id="subcatList">${subcatOptions}</datalist>
 
       <label>付款方式</label>
@@ -1060,7 +1073,7 @@ function renderExpenseModal(d, isEdit){
         <label>幣別（台幣現金可選「台幣」）</label>
         <select id="fCurrencyCash">
           <option value="">台幣（現金）</option>
-          ${ratePageCurrencies().map(c=>`<option value="${c}" ${d.currency===c?'selected':''}>${c}</option>`).join('')}
+          ${ratePageCurrencies().map(c=>`<option value="${escHtml(c)}" ${d.currency===c?'selected':''}>${escHtml(c)}</option>`).join('')}
         </select>
         <label id="fCashAmountLabel">${d.currency && d.currency!=='TWD' && d.currency!=='外幣' ? '外幣金額' : '金額（台幣）'}</label>
         <input type="number" id="fForeignCash" value="${d.currency && d.currency!=='TWD' ? d.foreignAmount : (d.twdAmount||'')}" placeholder="例如 1200">
@@ -1071,7 +1084,7 @@ function renderExpenseModal(d, isEdit){
         <label>幣別</label>
         <select id="fCurrency">
           <option value="">台幣（刷卡）</option>
-          ${ratePageCurrencies().map(c=>`<option value="${c}" ${d.currency===c?'selected':''}>${c}</option>`).join('')}
+          ${ratePageCurrencies().map(c=>`<option value="${escHtml(c)}" ${d.currency===c?'selected':''}>${escHtml(c)}</option>`).join('')}
         </select>
         <label>外幣金額（選填，方便對帳）</label>
         <input type="number" id="fForeignCard" value="${d.currency!=='TWD'?d.foreignAmount:''}" placeholder="例如 5000">
@@ -1387,14 +1400,14 @@ function renderAnalysis(){
     const pctOfTotal = grandTotal>0 ? (s/grandTotal*100) : 0;
     return `
     <div class="barrow">
-      <div class="barlabel"><span>${m.name}</span><span class="mono">NT$${fmt(s)}（${fmt(pctOfTotal)}%）</span></div>
+      <div class="barlabel"><span>${escHtml(m.name)}</span><span class="mono">NT$${fmt(s)}（${fmt(pctOfTotal)}%）</span></div>
       <div class="bartrack"><div class="barfill" style="width:${pctOfMax}%"></div></div>
     </div>`;
   }).join('') || `<div class="hint">尚無成員資料</div>`;
 
   const memberTableRows = sortedMembers.map(m=>`
     <div class="settlerow">
-      <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}</div>
+      <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${escHtml(initials(m.name))}</div>${escHtml(m.name)}</div>
       <div style="text-align:right">
         <div class="mono" style="font-weight:700">NT$${fmt(share[m.id]||0)}</div>
         <div class="hint">實付 ${fmt(paid[m.id]||0)}</div>
@@ -1472,7 +1485,7 @@ function renderSettleTWD(){
 
   const rows = members.map(m=>`
     <div class="settlerow">
-      <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}</div>
+      <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${escHtml(initials(m.name))}</div>${escHtml(m.name)}</div>
       <div style="text-align:right">
         <div class="mono" style="font-weight:700;color:${net[m.id]>=0?'var(--owed)':'var(--owe)'}">${net[m.id]>=0? '+':''}${fmt(net[m.id])}</div>
         <div class="hint">實付 ${fmt(paid[m.id])} ／ 應付 ${fmt(owed[m.id])}</div>
@@ -1482,9 +1495,9 @@ function renderSettleTWD(){
   const transfers = computeTransfers(net);
   const transferRows = transfers.map(t=>`
     <div class="transfer">
-      <div style="flex:1">${memberName(t.from)}</div>
+      <div style="flex:1">${escHtml(memberName(t.from))}</div>
       <div class="arrow">→</div>
-      <div style="flex:1">${memberName(t.to)}</div>
+      <div style="flex:1">${escHtml(memberName(t.to))}</div>
       <div class="mono" style="font-weight:700">NT$${fmt(t.amt)}</div>
     </div>`).join('') || `<div class="hint">目前已打平，不需轉帳。</div>`;
 
@@ -1501,7 +1514,7 @@ function renderSettleTWD(){
     </div>
   </div>
   <button class="btn ghost on-dark block" onclick="copySummary()">📋 複製結算文字</button>
-  <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${summaryText}</textarea>
+  <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${escHtml(summaryText)}</textarea>
   `;
 }
 
@@ -1588,7 +1601,7 @@ function renderSettleByCurrency(){
       if(Math.abs(paid[m.id])<0.01 && Math.abs(owed[m.id])<0.01) return '';
       return `
       <div class="settlerow">
-        <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${initials(m.name)}</div>${m.name}</div>
+        <div class="row" style="gap:8px"><div class="avatar" style="width:26px;height:26px;font-size:11px">${escHtml(initials(m.name))}</div>${escHtml(m.name)}</div>
         <div style="text-align:right">
           <div class="mono" style="font-weight:700;color:${net[m.id]>=0?'var(--owed)':'var(--owe)'}">${net[m.id]>=0? '+':''}${fmt(net[m.id])}${suffix}</div>
           <div class="hint">實付 ${prefix}${fmt(paid[m.id])}${suffix} ／ 應付 ${prefix}${fmt(owed[m.id])}${suffix}</div>
@@ -1598,15 +1611,15 @@ function renderSettleByCurrency(){
 
     const transferRows = transfers.map(t=>`
       <div class="transfer">
-        <div style="flex:1">${memberName(t.from)}</div>
+        <div style="flex:1">${escHtml(memberName(t.from))}</div>
         <div class="arrow">→</div>
-        <div style="flex:1">${memberName(t.to)}</div>
+        <div style="flex:1">${escHtml(memberName(t.to))}</div>
         <div class="mono" style="font-weight:700">${prefix}${fmt(t.amt)}${suffix}</div>
       </div>`).join('') || `<div class="hint">此幣別已打平，不需轉帳。</div>`;
 
     cardsHtml += `
     <div class="card">
-      <h2>${cur==='TWD'? '台幣 TWD':cur+' 現金／消費'}</h2>
+      <h2>${cur==='TWD'? '台幣 TWD':escHtml(cur)+' 現金／消費'}</h2>
       ${rows || `<div class="hint">此幣別無相關收支</div>`}
       <div class="stub">
         <h2 style="margin-bottom:8px">建議轉帳</h2>
@@ -1632,7 +1645,7 @@ function renderSettleByCurrency(){
   ${unresolved.length>0? `<div class="banner">⚠️ 有 ${unresolved.length} 筆支出的幣別尚未確定（現金沒填幣別，或刷卡未填外幣金額），暫時無法分幣別結算，請先到「記帳」補上資料，或改用「折合台幣結算」檢視。</div>`:''}
   ${cardsHtml}
   <button class="btn ghost on-dark block" onclick="copySummary()">📋 複製結算文字</button>
-  <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${summaryText}</textarea>
+  <textarea id="summaryTextHidden" style="position:absolute; left:-9999px;">${escHtml(summaryText)}</textarea>
   `;
 }
 
